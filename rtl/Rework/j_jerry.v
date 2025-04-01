@@ -73,9 +73,9 @@ module _j_jerry
 	output snd_l_en,
 	output snd_r_en,
 	output snd_clk,
-	
+
 	output [15:0] dspwd,
-	
+
 	input sys_clk // Generated
 );
 
@@ -231,7 +231,7 @@ assign xd_oe[15:0] = {16{den_obuf}};
 assign din[15:0] = xd_in[15:0];
 // nt = nand tree appears to be for factory testing only
 // Should probably remove. Likely to cause timing problems.
-// If kept, chain can likely be safely broken up in steps to help timing. 
+// If kept, chain can likely be safely broken up in steps to help timing.
 // Since test is grounded nt[9] is always 1 and nt[8:1] don't matter.
 assign nt[55] = ~(xd_in[0] & nt[54]); //
 assign nt[54] = ~(xd_in[1] & nt[53]); //
