@@ -241,8 +241,6 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
 // X XXXXXXXXXXXXXXXXXXXXX
 
-//
-
 `include "build_id.v"
 localparam CONF_STR = {
 	"Jaguar;;",
@@ -252,13 +250,14 @@ localparam CONF_STR = {
 	"-;",
 	"D0RC,Load Backup RAM;",
 	"D0RB,Save Backup RAM;",
-	"D0OD,Autosave,OFF,ON;",
+	"D0OD,Autosave,On,Off;",
 	"-;",
 	"O4,Region Setting,NTSC,PAL;",
 	"O2,Cart Checksum Patch,Off,On;",
 	"O78,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O9A,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"OI,Crop,No,Yes;",
+	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OE,VSync,vvs,hvs(debug);",
 	"-;",
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
@@ -497,7 +496,7 @@ assign USER_OUT[1] = status[17] ? ser_data_out : 1'b1;
 jaguar jaguar_inst
 (
 	.xresetl_in( xresetl ) ,	// input  xresetl
-
+	.cold_reset( ioctl_download ), // power cycle
 	.sys_clk( clk_sys ) ,		// input  clk_sys
 
 	.dram_a( dram_a ) ,			// output [9:0] dram_a
@@ -524,7 +523,7 @@ jaguar jaguar_inst
 
 	.cart_ce_n( cart_ce_n ) ,	// output  cart_ce_n
 	.cart_q( cart_q ) ,			// input [31:0] cart_q
-	
+
 	.bram_addr( bram_addr ),
 	.bram_data( bram_data ),
 	.bram_q( bram_q ),
@@ -559,8 +558,8 @@ jaguar jaguar_inst
 
 	.startcas( startcas ) ,
 
-	.turbo( status[3] ) ,
 	.vintbugfix( ~status[19] ),
+	.turbo( 0 ) , // Disabled with new cpu
 
 	.ntsc( ~status[4] ) ,
 
@@ -931,7 +930,7 @@ sdram sdram
 	.ch2_req            ((loader_en) ? loader_wr & rom_index : cart_rd_trig),     // request
 	.ch2_rnw            ((loader_en) ? !loader_wr & rom_index : 1'b1),     // 1 - read, 0 - write
 	.ch2_ready          (rom_wrack),
-	
+
 	.ram64              (ram64),
 
 	.self_refresh       (loader_en || !xresetl)
@@ -1049,7 +1048,7 @@ always @(posedge clk_sys) begin
 end
 
 wire bk_load    = status[12];
-wire bk_save    = status[11] | (bk_pending & OSD_STATUS && status[13]);
+wire bk_save    = status[11] | (bk_pending & OSD_STATUS && ~status[13]);
 reg  bk_loading = 0;
 reg  bk_state   = 0;
 

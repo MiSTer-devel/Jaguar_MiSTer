@@ -1,6 +1,7 @@
 module jaguar
 (
 	input               xresetl_in,
+	input               cold_reset,
 
 	input               sys_clk,
 
@@ -65,7 +66,7 @@ module jaguar
 
 	input               mouse_ena_1,
 	input               mouse_ena_2,
-	
+
 	output              comlynx_tx,
 	input               comlynx_rx,
 
@@ -73,7 +74,7 @@ module jaguar
 
 // NOT_NETLIST
 	input               turbo,
-	input               vintbugfix,	
+	input               vintbugfix,
 
 	input               ntsc
 );
@@ -91,7 +92,7 @@ wire startwe;
 wire startwep;
 assign dram_go_rd = d3a && !startwep && tlw;
 //assign dram_go_rd = d3a && !ram_rdy && xrw_in;
-assign dram_go_wr = d3b && !xrw_in;
+//assign dram_go_wr = d3b && !xrw_in;
 assign dram_rw = xrw_in;
 assign dram_addr[23:0] = xa_in[23:0];
 assign dram_be[7:0] = we[7:0];
@@ -316,7 +317,9 @@ wire    [15:0]  joy_bus;
 wire            joy_bus_oe;
 
 // 68000
+wire            fx68k_clk;
 wire            fx68k_rst;
+wire            fx68k_halt;
 wire            fx68k_rw;
 wire            fx68k_as_n;
 wire            fx68k_lds_n;
@@ -330,15 +333,21 @@ wire            fx68k_berr_n;
 wire    [2:0]   fx68k_ipl_n;
 wire    [15:0]  fx68k_dout;
 wire    [15:0]  fx68k_din;
-wire    [23:1]  fx68k_address;
+wire    [22:0]  fx68k_address;
 wire            fx68k_bg_n;
 wire            fx68k_br_n;
 wire            fx68k_bgack_n;
 wire    [23:0]  fx68k_byte_addr; // 24-bit address bus including the LSB set to 0
-// The 68k implementation we use will react 1 system clock behind where a real chip would, meaning
-// that the bus can be released a cycle late. We do this to release the bus as soon as bgack is no
-// longer being asserted from Tom.
+wire            fx68k_fc_z;
+wire            fx68k_rw_z;
+wire            fx68k_address_z;
+wire            fx68k_data_z;
+
 wire            fx68k_bus_en = ~fx68k_as_n & fx68k_bgack_n;
+wire            fx68k_fc_en = turbo ? fx68k_bus_en : ~fx68k_fc_z;
+wire            fx68k_rw_en =  turbo ? fx68k_bus_en : ~fx68k_rw_z;
+wire            fx68k_address_en =  turbo ? fx68k_bus_en : ~fx68k_address_z;
+wire            fx68k_data_en = turbo ? (fx68k_bus_en & ~fx68k_rw) : ~fx68k_data_z;
 
 // EEPROM
 wire            ee_cs;
@@ -420,8 +429,7 @@ end
 assign rw =
 	(xrw_oe)         ? xrw_out   : //1'b1) &
 	(j_xrw_oe)       ? j_xrw_out : //1'b1) &
-	                   fx68k_rw;
-//	(fx68k_bus_en)   ? fx68k_rw  : 1'b1;
+	(fx68k_rw_en)    ? fx68k_rw  : 1'b1;
 
 assign xrw_in = rw;
 assign j_xrw_in = rw;
@@ -429,20 +437,19 @@ assign j_xrw_in = rw;
 // Note xsiz_oe[1:0] is 2 copies of aen; could just use aen or any bit of xsiz_oe
 // Note j_xsiz_oe[1:0] is 2 copies of j_aen; could just use j_aen or any bit of j_xsiz_oe
 assign siz =
-	(xsiz_oe[0])      ? xsiz_out    : //2'b11) &
-	(j_xsiz_oe[0])    ? j_xsiz_out  : //2'b11) &
-	                    {fx68k_uds_n, fx68k_lds_n};
-//	(fx68k_bus_en)    ? {fx68k_uds_n, fx68k_lds_n} : 2'b11;
+	(xsiz_oe[0])         ? xsiz_out    :
+	(j_xsiz_oe[0])       ? j_xsiz_out  :
+	(fx68k_address_en)   ? {fx68k_uds_n, fx68k_lds_n} :
+	2'b11;
 
 assign xsiz_in = siz;
 assign j_xsiz_in = siz;
 
-// Note xdreql_oe is aen; could just use aen
 assign dreql =
-	(xdreql_oe)     ? xdreql_out   : //1'b1) &
-	(j_xdreql_oe)   ? j_xdreql_out : //1'b1) &
-	                  fx68k_as_n;
-//	(fx68k_bus_en)  ? fx68k_as_n   : 1'b1;
+	(xdreql_oe)        ? xdreql_out   :
+	(j_xdreql_oe)      ? j_xdreql_out :
+	(fx68k_address_en) ? fx68k_as_n   :
+	1'b1;
 
 assign xdreql_in = dreql;
 assign j_xdreql_in = dreql;
@@ -450,24 +457,19 @@ assign j_xdreql_in = dreql;
 // Busses between TOM/JERRY/68000
 
 // Address bus
-// Note xa_oe[23:0] is 24 copies of aen; could just use aen or any bit of xa_oe
-// Note j_xa_oe[23:0] is 24 copies of j_aen; could just use j_aen or any bit of j_xa_oe
 assign abus[23:0] =
-	(xa_oe[0])     ? xa_out[23:0]           : // Tom.
-	(j_xa_oe[0])   ? j_xa_out[23:0]         : // Jerry.
-	                 fx68k_byte_addr[23:0];   // 68000.
-//	(fx68k_bus_en) ? fx68k_byte_addr[23:0]  : // 68000.
-//	24'hFFFFFF;
+	(xa_oe[0])         ? xa_out[23:0]           : // Tom.
+	(j_xa_oe[0])       ? j_xa_out[23:0]         : // Jerry.
+	(fx68k_address_en) ? fx68k_byte_addr[23:0]  : // 68000.
+	24'hFFFFFF; // FIXME: It's unknown if this is pulled up weakly by anything.
 
 assign xa_in[23:0] = abus[23:0];
 
 // Avoid inputting jerry's own output for timing reasons
-// Note xa_oe[23:0] is 24 copies of aen; could just use aen or any bit of xa_oe
 assign j_xa_in[23:0] =
-	(xa_oe[0])     ? xa_out[23:0]          : // Tom.
-	                 fx68k_byte_addr[23:0];  // 68000.
-//	(fx68k_bus_en) ? fx68k_byte_addr[23:0] : // 68000.
-//	24'hFFFFFF;
+	(xa_oe[0])         ? xa_out[23:0]          : // Tom.
+	(fx68k_address_en) ? fx68k_byte_addr[23:0] : // 68000.
+	24'hFFFFFF;
 
 // Data Bus
 
@@ -476,8 +478,6 @@ reg [63:0] open_bus; // Chances are this should be capacitance based
 always @(posedge sys_clk) begin
 	open_bus <= dbus;
 end
-
-wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
 
 // External Data Bus
 wire e_dbus_oe = ~xexpl & rw;
@@ -506,11 +506,11 @@ wire [31:0] e_dbus = (e_dbus_we) ? dbus[31:0] : {e_dbus_31_16, e_dbus_15_8, e_db
 
 // Primary Data Bus
 wire [7:0] dbus_7_0 =
-	(fx68k_dout_en)      ? fx68k_dout[7:0]  : // 68000.
+	(fx68k_data_en)      ? fx68k_dout[7:0]  : // 68000.
 	open_bus[7:0];                            // Open bus.
 
 wire [7:0] dbus_15_8 =
-	(fx68k_dout_en)      ? fx68k_dout[15:8] : // 68000.
+	(fx68k_data_en)      ? fx68k_dout[15:8] : // 68000.
 	open_bus[15:8];                           // Open bus.
 
 wire [15:0] dbus_15_0_no_j =
@@ -563,9 +563,9 @@ assign dram_oe_n[3:0] = {xoel[2], xoel[2], xoel[1], xoel[0]}; // Note: OEL bit 2
 // master cycles are the wrong type.
 
 // Resistors are tied to 2 1 0 = vcc gnd vcc = 3'b101
-assign xfc_in[0] = ((xfc_oe[0] ? xfc_out[0] : 1'd1) & (~fx68k_bus_en ? 1'd1 : fx68k_fc[0]));
-assign xfc_in[1] = ((xfc_oe[1] ? xfc_out[1] : 1'd1) & (~fx68k_bus_en ? 1'd0 : fx68k_fc[1]));
-assign xfc_in[2] = ((xfc_oe[2] ? xfc_out[2] : 1'd1) & (~fx68k_bus_en ? 1'd1 : fx68k_fc[2]));
+assign xfc_in[0] = ((xfc_oe[0] ? xfc_out[0] : 1'd1) & (~fx68k_fc_en ? 1'd1 : fx68k_fc[0]));
+assign xfc_in[1] = ((xfc_oe[1] ? xfc_out[1] : 1'd1) & (~fx68k_fc_en ? 1'd0 : fx68k_fc[1]));
+assign xfc_in[2] = ((xfc_oe[2] ? xfc_out[2] : 1'd1) & (~fx68k_fc_en ? 1'd1 : fx68k_fc[2]));
 
 // Wire-ORed with pullup (?)
 assign xba_in = xba_oe ? xba_out : 1'b1;    // Bus Acknowledge.
@@ -691,7 +691,7 @@ jag_controller_mux controller_mux_2
 
 reg [1:0] sp_out0;
 reg [1:0] sp_out1;
-wire [7:0] spthresh = spinner_speed[1] ? 12'h8<<spinner_speed : 12'h8>>spinner_speed; 
+wire [7:0] spthresh = spinner_speed[1] ? 12'h8<<spinner_speed : 12'h8>>spinner_speed;
 
 always @(posedge sys_clk) begin
 	reg [1:0] sp_prev;
@@ -813,26 +813,32 @@ always @(posedge sys_clk) begin
 end
 
 assign joy_bus[7:0] =
-	((~j_xjoy_in[0]) ? joy[7:0] : 8'hFF) &  // j_xjoy_in[0] enables joystick on the ebus, which can be either the latch if xjoy_in[3] is low, or the joystick inputs.
-	((~j_xjoy_in[1]) ? b[7:0] : 8'hFF);     // j_xjoy_in[1]. Enables system jumper "b bus" output onto the external bus.
+	((~j_xjoy_in[0]) ? joy[7:0] : 8'hFF) &  // enables joystick on the ebus, which can be either the latch if xjoy_in[3] is low, or the joystick inputs.
+	((~j_xjoy_in[1]) ? b[7:0] : 8'hFF);     // Enables system jumper "b bus" output onto the external bus.
 
-assign joy_bus[15:8] = (~j_xjoy_in[0]) ? joy[15:8] : 8'b11111111; // j_xjoy_in[0]. Output enables the 16 joystick input pins onto the ebus. (upper byte).
+assign joy_bus[15:8] = (~j_xjoy_in[0]) ? joy[15:8] : 8'b11111111; // Output enables the 16 joystick input pins onto the ebus. (upper byte).
 assign joy_bus_oe = (~j_xjoy_in[0] | ~j_xjoy_in[1]);
 
 // EEPROM INTERFACE
-// Weird, but I don't see how it could work otherwise...
 assign ee_cs = j_xgpiol_in[1];
 assign ee_sk = j_xgpiol_in[0];
+
+// FIXME: ee_di should be e_dbus[0]. The schematic very clearly shows that the eternal bus is
+// connected to the cart slot and thus the EEPROM. However, when the eeprom's address is put onto
+// the address bus to trigger jerry's GPIO pins, it triggers tom to disconnect the external bus. I'm
+// uncertain how this worked on a real system, but I can only guess there was some kind of delay in
+// the eeprom's latching of DI.
 assign ee_di = dbus[0];
 
-eeprom eeprom_inst // FIXME: this should really be saved as a save file
+eeprom eeprom_inst
 (
 	.sys_clk (sys_clk),
+	.reset   (cold_reset),
 	.cs      (ee_cs),
 	.sk      (ee_sk),
 	.din     (ee_di),
 	.dout    (ee_do),
-	
+
 	.bram_addr( bram_addr ),
 	.bram_data( bram_data ),
 	.bram_q   ( bram_q ),
@@ -927,7 +933,6 @@ _tom tom_inst
 	.vsync           (vga_vs_n),
 	.vvs             (vvs),
 	.tlw             (tlw),
-//	.tlw_out         (tom_tlw),
 	.ram_rdy         (ram_rdy),
 	.aen             (aen),
 	.den             (den[2:0]),
@@ -964,7 +969,7 @@ _j_jerry jerry_inst
 	.xi2srxd         (j_xi2srxd),
 	.xeint           (j_xeint[1:0]),
 	.xtest           (j_xtest),
-	.xchrin          (j_xchrin),  // Should be 14.3mhz, ntsc clock. Doesnt seem to do anything.
+	.xchrin          (j_xchrin),  // Should be 14.3mhz, ntsc clock. Not needed for fpga design.
 	.xresetil        (xresetl),
 	.xd_out          (j_xd_out[31:0]),
 	.xd_oe           (j_xd_oe[31:0]),
@@ -1015,7 +1020,6 @@ _j_jerry jerry_inst
 	.tlw_0           (tlw),
 	.tlw_1           (tlw),
 	.tlw_2           (tlw),
-//	.tlw_out         (jerry_tlw),
 	.aen             (j_aen),
 	.den             (j_den),
 	.ainen           (j_ainen),
@@ -1027,8 +1031,9 @@ _j_jerry jerry_inst
 );
 
 // Motorola 68000
-
-assign fx68k_rst       = !xresetl;
+wire fx68k_reset_pull, fx68k_halt_pull;
+assign fx68k_halt      = ~fx68k_halt_pull & fx68k_rst;
+assign fx68k_rst       = ~fx68k_reset_pull & j_xresetl & xresetl;
 assign fx68k_dtack_n   = xdtackl;               // Should be able to just use xdtackl directly now, as the Bus Request signals are hooked up to FX68K.
 assign fx68k_vpa_n     = 1'b1;                  // The real Jag has VPA_N on the 68K tied High, which means it's NOT using auto-vector for the interrupt. ElectronAsh.
 assign fx68k_berr_n    = 1'b1;                  // The real Jag has BERR_N on the 68K tied High.
@@ -1043,20 +1048,44 @@ flipflop xbgl_ff
 (
 	.sys_clk (sys_clk),
 	.clk     (~fx68k_bg_n),
-	.set     (fx68k_bgack_n & xresetl),
+	.set     (fx68k_bgack_n),
 	.data    (1'b0),
 	.clear   (1'b1),
 	.q       (xbgl)
 );
 
-reg old_j_xcpuclk;
+assign fx68k_clk = turbo ? (ce_26_6_p1 | ce_26_6_p2) : j_xcpuclk;
 
-wire fx68k_phi1 = xvclk & (~j_xcpuclk || turbo);
-wire fx68k_phi2 = tlw & (j_xcpuclk || turbo);
-
-always @(posedge sys_clk) begin
-	old_j_xcpuclk <= j_xcpuclk;
-end
+m68kcpu m68k_inst
+(
+	.MCLK         (sys_clk),
+	.CLK          (fx68k_clk),
+	.VPA          (fx68k_vpa_n),
+	.BR           (fx68k_br_n),
+	.BGACK        (fx68k_bgack_n),
+	.DTACK        (fx68k_dtack_n),
+	.IPL          (fx68k_ipl_n),
+	.BERR         (fx68k_berr_n),
+	.RESET_i      (fx68k_rst),
+	.RESET_pull   (fx68k_reset_pull),
+	.HALT_i       (fx68k_halt),
+	.HALT_pull    (fx68k_halt_pull),
+	.DATA_i       (fx68k_din),
+	.DATA_o       (fx68k_dout),
+	.DATA_z       (fx68k_data_z),
+	.E_CLK        (fx68k_e),
+	.BG           (fx68k_bg_n),
+	.FC           (fx68k_fc),
+	.FC_z         (fx68k_fc_z),
+	.RW           (fx68k_rw),
+	.RW_z         (fx68k_rw_z),
+	.ADDRESS      (fx68k_address),
+	.ADDRESS_z    (fx68k_address_z),
+	.AS           (fx68k_as_n),
+	.LDS          (fx68k_lds_n),
+	.UDS          (fx68k_uds_n),
+	.strobe_z     ()
+);
 
 // NTSC Virtual Jaguar:
 // 68000: 6525   GPU Internal: 88554   GPU External: 89907
@@ -1067,44 +1096,11 @@ end
 // Mister NTSC:
 // 68000: 2168   GPU Internal: 10819   GPU External: 11380
 
-fx68k fx68k_inst
-(
-	.clk            (sys_clk),         // input system clock
-	.HALTn          (1'b1),
-	.extReset       (~j_xresetl),      // input
-	.pwrUp          (fx68k_rst),       // input
-	.enPhi1         (fx68k_phi1),      // input
-	.enPhi2         (fx68k_phi2),      // input
-	.eRWn           (fx68k_rw),        // output
-	.ASn            (fx68k_as_n),      // output
-	.LDSn           (fx68k_lds_n),     // output
-	.UDSn           (fx68k_uds_n),     // output
-	.E              (fx68k_e),         // output
-	.VMAn           (fx68k_vma_n),     // output
-	.FC0            (fx68k_fc[0]),     // output
-	.FC1            (fx68k_fc[1]),     // output
-	.FC2            (fx68k_fc[2]),     // output
-//  .oRESETn        (oRESETn),         // output
-//  .oHALTEDn       (oHALTEDn),        // output
-	.DTACKn         (fx68k_dtack_n),   // input
-	.VPAn           (fx68k_vpa_n),     // input - Tied HIGH on the real Jag.
-	.BERRn          (fx68k_berr_n),    // input - Tied HIGH on the real Jag.
-	.BRn            (fx68k_br_n),      // input
-	.BGn            (fx68k_bg_n),      // output
-	.BGACKn         (fx68k_bgack_n),   // input
-	.IPL0n          (fx68k_ipl_n[0]),  // input
-	.IPL1n          (fx68k_ipl_n[1]),  // input
-	.IPL2n          (fx68k_ipl_n[2]),  // input
-	.iEdb           (fx68k_din),       // input
-	.oEdb           (fx68k_dout),      // output
-	.eab            (fx68k_address)    // output
-);
-
 // VIDEO / 15 KHz (native) output...
 assign vga_r = xr[7:0];
 assign vga_g = xg[7:0];
 assign vga_b = xb[7:0];
-//assign vga_b = {xb[7:1], 1'b0}; // FIXME: heck if I know why they did this, maybe it's best not to
+//assign vga_b = {xb[7:1], 1'b0}; // FIXME: Real Jaguar has the LSB of blue disconnected for no obvious reason.
 
 // AUDIO / I2S receiver
 wire   i2s_ws   = j_xws_in;
@@ -1151,11 +1147,12 @@ endmodule
 module eeprom
 (
 	input  sys_clk,
+	input  reset, // This reset represents a power cycle, not a soft reset.
 	input  cs,
 	input  sk,
 	input  din,
 	output dout,
-	
+
 	output       [9:0]  bram_addr,
 	output      [15:0]  bram_data,
 	input       [15:0]  bram_q,
@@ -1193,7 +1190,9 @@ reg          bram_wr_;
 always @(posedge sys_clk) begin
 	sk_prev <= sk;
 	bram_wr_ <= 1'b0;
-	if (~cs) begin
+	if (reset)
+		ewen <= 1'b0;
+	if (~cs || reset) begin
 		// Reset
 		status <= `EE_IDLE;
 		cnt <= 4'd0;
@@ -1203,7 +1202,6 @@ always @(posedge sys_clk) begin
 		wraddr <= 6'b000000;
 		wrdata <= 16'hFFFF;
 		wrloop <= 1'b0;
-
 
 	end else if (~sk_prev & sk) begin
 		if (status == `EE_IDLE) begin
