@@ -39,8 +39,8 @@ module sdram
 	output            SDRAM_CKE,   // clock enable
 	output            SDRAM_CLK,   // clock for chip
 
-//	input      [26:1] ch1_addr,    // 25 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
-	input      [10:3] ch1_addr,    // 25 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
+//	input      [26:1] ch1_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
+	input      [10:3] ch1_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
 	input      [12:0] ch1_caddr,   // direct control.
 	output     [63:0] ch1_dout,    // data output to cpu
 	input      [63:0] ch1_din,     // data input from cpu
@@ -54,12 +54,20 @@ module sdram
 	output reg        ch1_ready,
 	input             ch1_64,
 	
-	input      [22:1] ch2_addr,    // 25 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
+	input      [23:1] ch2_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
 	output reg [31:0] ch2_dout,    // data output to cpu
 	input      [15:0] ch2_din,     // data input from cpu
 	input             ch2_req,     // request
 	input             ch2_rnw,     // 1 - read, 0 - write
+	input      [1:0]  ch2_be,      // Byte enable (bits) for writes.
 	output reg        ch2_ready,
+	
+	input      [23:0] ch3_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
+	output reg [31:0] ch3_dout,    // data output to cpu
+	input      [31:0] ch3_din,     // data input from cpu
+	input             ch3_req,     // request
+	input             ch3_rnw,     // 1 - read, 0 - write
+	output reg        ch3_ready,
 	
 	output reg        ram64,
 
@@ -90,7 +98,7 @@ localparam startup_refresh_max = 14'b11111111111111;
 
 // SDRAM commands - ras, cas, we
 wire [2:0] CMD_NOP             = 3'b111;
-wire [2:0] CMD_BURST_STOP      = 3'b110;
+//wire [2:0] CMD_BURST_STOP      = 3'b110;
 wire [2:0] CMD_ACTIVE          = 3'b011;
 wire [2:0] CMD_READ            = 3'b101;
 wire [2:0] CMD_WRITE           = 3'b100;
@@ -135,8 +143,13 @@ always @(posedge clk) begin
 	reg [10:3] saved_addr;
 	
 	reg [15:0] ch2_data;
-	reg [22:1] ch2_add;
+	reg [23:1] ch2_add;
 	reg        ch2_wr;
+
+	reg [31:0] ch3_data;
+	reg [22:1] ch3_add;
+	reg        ch3_wr;
+	reg [3:0]  ch_temp;
 
 	reg       ch;
 	reg       ch1_rqr, ch1_rqw, ch2_rq;
@@ -176,10 +189,12 @@ always @(posedge clk) begin
 		ch2_add   <= ch2_addr;
 		ch2_wr    <= !ch2_rnw;
 		ch2_ready <= 0;
+		ch_temp   <= ch_tmp;
 	end
 	if (ch1_reqr) begin
 		saved_addr <= ch1_addr;
 	end
+	ch3_ready <= 0;
 	
 
 	command <= CMD_NOP;
@@ -332,9 +347,11 @@ always @(posedge clk) begin
 				ch     <= 0;
 			end
 			else if(ch2_rq) begin
-				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch2_add[22:10], 1'b0, ch2_add[9:1]}; // auto precharge
+//				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch2_add[22:10], 1'b0, ch2_add[9:1]}; // auto precharge
+				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch_temp, ch2_add[19:10], ch2_add[9:1]}; // auto precharge
 				saved_data <= {ch2_data,ch2_data,ch2_data,ch2_data};
 				saved_wr   <= ch2_wr;
+				saved_mask[3:2] <= ~ch2_be[1:0]; // first write uses [3:2]
 				ch         <= 1;
 				ch2_rq     <= 0;
 				command    <= CMD_ACTIVE;
@@ -353,7 +370,7 @@ always @(posedge clk) begin
 			if(saved_wr) begin
 				command  <= CMD_WRITE;
 				SDRAM_DQ <= saved_data[31:16];
-				SDRAM_A[12:11] <= (ch == 0) ? saved_mask[3:2] : 2'b00; //~be; always write
+				SDRAM_A[12:11] <= saved_mask[3:2];//(ch == 0) ? saved_mask[3:2] : 2'b00; //~be; always write
 				state <= (ch == 0) ? STATE_RW2 : STATE_IDLE_3;
 			end else if (ch == 1) begin
 				command <= CMD_READ;
@@ -371,7 +388,7 @@ always @(posedge clk) begin
 				SDRAM_DQ <= saved_data[15:0];
 				SDRAM_A[12:11] <= saved_mask[1:0];
 				SDRAM_A[0] <= 1'b1;
-				ch1_ready   <= ch1_64 ? 0 : 1;
+				ch1_ready   <= ch1_64 ? 1'b0 : 1'b1;
 			end else begin
 				{SDRAM_BA,SDRAM_A} <= {2'b01,2'b00,1'b0,1'b0,saved_addr[10:3],1'b0}; // no auto precharge
 				command <= CMD_READ;
@@ -418,12 +435,21 @@ always @(posedge clk) begin
 		end
 	endcase
 
+	if(ch3_req && ch3_rnw) begin
+		ch3_dout  <= ch3_din;
+//		ch3_data  <= ch3_din;
+		ch3_ready <= 0;
+	end
+
 	if (init) begin
 		state <= STATE_STARTUP;
 		refresh_count <= startup_refresh_max - sdram_startup_cycles;
 		ch2_ready <= 0;
 	end
 end
+wire [3:0] ch_tmp = ch2_addr[23:20]==4'h5 ? ch3_addr[23:20] : ch2_addr[23:20]==4'h4 ? ch3_addr[19:16] : ch2_addr[23:20]==4'h3 ? ch3_addr[15:12] 
+                  : ch2_addr[23:20]==4'h2 ? ch3_addr[11:8]  : ch2_addr[23:20]==4'h1 ? ch3_addr[7:4]   : ch2_addr[23:20]==4'h0 ? ch3_addr[3:0]
+						: ch2_addr[23:20];
 
 altddio_out
 #(

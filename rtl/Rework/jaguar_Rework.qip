@@ -13,6 +13,8 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rewo
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/ra8008c.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/raa016a.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/rd64x32.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/butch.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/butch_i2s.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/j_dac.v ]
 #set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Reworkw/j_dacw.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) ../Rework/j_dsp.v ]

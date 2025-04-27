@@ -4,8 +4,8 @@ module _gpu_mem
 (
 	output [31:0] gpu_data_out,
 	output gpu_data_oe,
-	output [31:0] gpu_dout_out, // jerry only
-	output gpu_dout_15_0_oe, // jerry only
+	output [31:16] gpu_dout_out, // jerry only
+//	output gpu_dout_15_0_oe, // jerry only
 	output gpu_dout_31_16_oe, // jerry only
 	output accumrd, // jerry only
 	output big_instr,
@@ -451,8 +451,8 @@ assign gpu_dout_out[31:16] = gpu_din[15:0];
 assign gpu_dout_31_16_oe = i2shien;
 
 // DSP_MEM.NET (436) - i2shid[0-15] : ts
-assign gpu_dout_out[15:0] = 16'h0;
-assign gpu_dout_15_0_oe = 1'b0;
+//assign gpu_dout_out[15:0] = 16'h0;
+//assign gpu_dout_15_0_oe = 1'b0;
 
 // GPU_MEM.NET (415) - big_ioi : mx2
 assign big_ioi = (bigwr) ? gpu_din[0] : big_iot;

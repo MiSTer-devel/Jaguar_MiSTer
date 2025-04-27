@@ -190,8 +190,8 @@ wire gpu_dout_ins_10_6_oe;
 wire gpu_dout_ins_31_16_oe;
 wire [2:0] gpu_dout_arith_out; //71a0
 wire gpu_dout_arith_oe;
-wire [31:0] gpu_dout_mem_out; //71a1
-wire gpu_dout_mem_15_0_oe; // This doesnt really exist. should pass through when gpu_dout_mem_31_16_oe == 1
+wire [31:16] gpu_dout_mem_out; //71a1
+//wire gpu_dout_mem_15_0_oe; // This doesnt really exist. should pass through when gpu_dout_mem_31_16_oe == 1
 wire gpu_dout_mem_31_16_oe;
 wire [15:0] gpu_dout_ctrl_out; //71a2
 wire gpu_dout_ctrl_5_0_oe;
@@ -473,8 +473,8 @@ _gpu_mem #(.JERRY(1)) dsp_mem_inst
 (
 	.gpu_data_out /* BUS */ (gpu_data_mem_out[31:0]),
 	.gpu_data_oe /* BUS */ (gpu_data_mem_oe),
-	.gpu_dout_out /* BUS */ (gpu_dout_mem_out[31:0]),
-	.gpu_dout_15_0_oe /* BUS */ (gpu_dout_mem_15_0_oe),
+	.gpu_dout_out /* BUS */ (gpu_dout_mem_out[31:16]),
+//	.gpu_dout_15_0_oe /* BUS */ (gpu_dout_mem_15_0_oe),
 	.gpu_dout_31_16_oe /* BUS */ (gpu_dout_mem_31_16_oe),
 	.accumrd /* OUT */ (accumrd),
 	.big_instr /* OUT */ (big_instr),
@@ -658,22 +658,33 @@ wire gpu_dout_15_oe;
 wire gpu_dout_31_16_oe;
 assign gpu_dout_oe = gpu_dout_2_0_oe | gpu_dout_5_3_oe | gpu_dout_10_6_oe | gpu_dout_14_11_oe | gpu_dout_15_oe | gpu_dout_31_16_oe;
 // below is unnecessary. if any bit is set all will be and should not have overlap so could just use ternaries
-//wire gpu_dout_mem_15_0_oe; // This doesnt really exist. should pass through when gpu_dout_mem_31_16_oe == 1
+//wire gpu_dout_mem_15_0_oe; // This doesnt really exist. should pass through when gpu_dout_mem_31_16_oe == 1. This happens for i2sr0/1/2 = f1a148/4c/50
 // --- Compiler-generated local PE for BUS gpu_dout[0]
-assign gpu_dout_out[2:0] = (gpu_dout_arith_oe ? gpu_dout_arith_out[2:0] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[2:0] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[2:0] : 3'h0);
-assign gpu_dout_2_0_oe = gpu_dout_arith_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_5_0_oe;
+//assign gpu_dout_out[2:0] = (gpu_dout_arith_oe ? gpu_dout_arith_out[2:0] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[2:0] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[2:0] : 3'h0);
+//assign gpu_dout_2_0_oe = gpu_dout_arith_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_5_0_oe;
+//assign gpu_dout_out[5:3] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[5:3] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[5:3] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[5:3] : 3'h0);
+//assign gpu_dout_5_3_oe = gpu_dout_ins_14_3_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_5_0_oe;
+//assign gpu_dout_out[10:6] = (gpu_dout_ins_10_6_oe ? gpu_dout_ins_out[10:6] : 5'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[10:6] : 5'h0);
+//assign gpu_dout_10_6_oe = gpu_dout_ins_10_6_oe | gpu_dout_mem_15_0_oe;
+//assign gpu_dout_out[14:11] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[14:11] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[14:11] : 3'h0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[14:11] : 3'h0);
+//assign gpu_dout_14_11_oe = gpu_dout_ins_14_3_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_15_11_oe;
+//assign gpu_dout_out[15] = (gpu_dout_gate_15_oe ? gpu_dout_gate_15_out : 1'b0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[15] : 1'b0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[15] : 1'h0);
+//assign gpu_dout_15_oe = gpu_dout_gate_15_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_15_11_oe;
 
-assign gpu_dout_out[5:3] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[5:3] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[5:3] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[5:3] : 3'h0);
-assign gpu_dout_5_3_oe = gpu_dout_ins_14_3_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_5_0_oe;
+assign gpu_dout_out[2:0] = (gpu_dout_arith_oe ? gpu_dout_arith_out[2:0] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[2:0] : 3'h0);
+assign gpu_dout_2_0_oe = gpu_dout_arith_oe | gpu_dout_ctrl_5_0_oe;
 
-assign gpu_dout_out[10:6] = (gpu_dout_ins_10_6_oe ? gpu_dout_ins_out[10:6] : 5'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[10:6] : 5'h0);
-assign gpu_dout_10_6_oe = gpu_dout_ins_10_6_oe | gpu_dout_mem_15_0_oe;
+assign gpu_dout_out[5:3] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[5:3] : 3'h0) | (gpu_dout_ctrl_5_0_oe ? gpu_dout_ctrl_out[5:3] : 3'h0);
+assign gpu_dout_5_3_oe = gpu_dout_ins_14_3_oe | gpu_dout_ctrl_5_0_oe;
 
-assign gpu_dout_out[14:11] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[14:11] : 3'h0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[14:11] : 3'h0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[14:11] : 3'h0);
-assign gpu_dout_14_11_oe = gpu_dout_ins_14_3_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_15_11_oe;
+assign gpu_dout_out[10:6] = (gpu_dout_ins_10_6_oe ? gpu_dout_ins_out[10:6] : 5'h0);
+assign gpu_dout_10_6_oe = gpu_dout_ins_10_6_oe;
 
-assign gpu_dout_out[15] = (gpu_dout_gate_15_oe ? gpu_dout_gate_15_out : 1'b0) | (gpu_dout_mem_15_0_oe ? gpu_dout_mem_out[15] : 1'b0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[15] : 1'h0);
-assign gpu_dout_15_oe = gpu_dout_gate_15_oe | gpu_dout_mem_15_0_oe | gpu_dout_ctrl_15_11_oe;
+assign gpu_dout_out[14:11] = (gpu_dout_ins_14_3_oe ? gpu_dout_ins_out[14:11] : 3'h0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[14:11] : 3'h0);
+assign gpu_dout_14_11_oe = gpu_dout_ins_14_3_oe | gpu_dout_ctrl_15_11_oe;
+
+assign gpu_dout_out[15] = (gpu_dout_gate_15_oe ? gpu_dout_gate_15_out : 1'b0) | (gpu_dout_ctrl_15_11_oe ? gpu_dout_ctrl_out[15] : 1'h0);
+assign gpu_dout_15_oe = gpu_dout_gate_15_oe | gpu_dout_ctrl_15_11_oe;
 
 assign gpu_dout_out[31:16] = (gpu_dout_ins_31_16_oe ? gpu_dout_ins_out[31:16] : 16'h0) | (gpu_dout_mem_31_16_oe ? gpu_dout_mem_out[31:16] : 16'h0);
 assign gpu_dout_31_16_oe = gpu_dout_ins_31_16_oe | gpu_dout_mem_31_16_oe;

@@ -15,13 +15,13 @@ module jaguar
 	input       [63:0]  dram_q,
 	input       [3:0]   dram_oe,
 	input               ram_rdy,
-	output              dram_go,
+//	output              dram_go,
 	output              dram_go_rd,
 	output              dram_rw,
 	output      [23:0]  dram_addr,
 	output      [7:0]   dram_be,
 	output              dram_startwep,
-	output              dram_startwe,
+//	output              dram_startwe,
 	output      [10:3]  dram_addrp,
 
 	output      [23:0]  abus_out,      // Main external address bus output, used for OS ROM (BIOS), cart, etc. Lower 3 bits are masked.
@@ -73,11 +73,37 @@ module jaguar
 	output              startcas,
 
 // NOT_NETLIST
+	input maxc,
+	input auto_eeprom,
+	output [23:0] addr_ch3,
+	input [8:0] toc_addr,
+	input [15:0] toc_data,
+	input toc_wr,
+
+	output      [28:0]  audbus_out,
+	input       [63:0]  aud_in,
+	input               audwaitl,
+	output              aud_ce,
+input aud_sess,
+
+	input               cd_en,
+	input               cd_ex,
+	output              b_override,
+input dohacks,
+output xvclk_o,
+output overflow,
+output underflow,
+output errflow,
+output unhandled,
+	
 	input               turbo,
-	input               vintbugfix,
+	input               vintbugfix,	
+	
+	input ddreq,
 
 	input               ntsc
 );
+assign xvclk_o = xvclk;
 
 wire [1:0] cart_oe_n;
 wire [1:0] cart_oe;
@@ -376,8 +402,8 @@ assign j_xoel_0 = xoel[0];              // Output Enable
 assign j_xwel_0 = xwel[0];              // Write Enable
 
 assign j_xdtackl = xdtackl;             // Data Acknowledge from Tom (also goes to the 68K)
-assign j_xi2srxd = 1'b1;                // (Async?) I2S receive
-assign j_xeint[0] = 1'b1;               // External Interrupt
+//assign j_xi2srxd = 1'b1;                // (Async?) I2S receive
+//assign j_xeint[0] = 1'b1;               // External Interrupt
 assign j_xeint[1] = 1'b1;               // External Interrupt
 assign j_xtest = 1'b0;                  // "test" pins on both Tom and Jerry are tied to GND on the Jag
 assign j_xchrin = 1'b1;                 // Not used
@@ -429,7 +455,8 @@ end
 assign rw =
 	(xrw_oe)         ? xrw_out   : //1'b1) &
 	(j_xrw_oe)       ? j_xrw_out : //1'b1) &
-	(fx68k_rw_en)    ? fx68k_rw  : 1'b1;
+	                   fx68k_rw;
+//	(fx68k_bus_en)   ? fx68k_rw  : 1'b1;
 
 assign xrw_in = rw;
 assign j_xrw_in = rw;
@@ -437,14 +464,15 @@ assign j_xrw_in = rw;
 // Note xsiz_oe[1:0] is 2 copies of aen; could just use aen or any bit of xsiz_oe
 // Note j_xsiz_oe[1:0] is 2 copies of j_aen; could just use j_aen or any bit of j_xsiz_oe
 assign siz =
-	(xsiz_oe[0])         ? xsiz_out    :
-	(j_xsiz_oe[0])       ? j_xsiz_out  :
-	(fx68k_address_en)   ? {fx68k_uds_n, fx68k_lds_n} :
-	2'b11;
+	(xsiz_oe[0])      ? xsiz_out    : //2'b11) &
+	(j_xsiz_oe[0])    ? j_xsiz_out  : //2'b11) &
+	                    {fx68k_uds_n, fx68k_lds_n};
+//	(fx68k_bus_en)    ? {fx68k_uds_n, fx68k_lds_n} : 2'b11;
 
 assign xsiz_in = siz;
 assign j_xsiz_in = siz;
 
+// Note xdreql_oe is aen; could just use aen
 assign dreql =
 	(xdreql_oe)        ? xdreql_out   :
 	(j_xdreql_oe)      ? j_xdreql_out :
@@ -457,6 +485,8 @@ assign j_xdreql_in = dreql;
 // Busses between TOM/JERRY/68000
 
 // Address bus
+// Note xa_oe[23:0] is 24 copies of aen; could just use aen or any bit of xa_oe
+// Note j_xa_oe[23:0] is 24 copies of j_aen; could just use j_aen or any bit of j_xa_oe
 assign abus[23:0] =
 	(xa_oe[0])         ? xa_out[23:0]           : // Tom.
 	(j_xa_oe[0])       ? j_xa_out[23:0]         : // Jerry.
@@ -466,6 +496,7 @@ assign abus[23:0] =
 assign xa_in[23:0] = abus[23:0];
 
 // Avoid inputting jerry's own output for timing reasons
+// Note xa_oe[23:0] is 24 copies of aen; could just use aen or any bit of xa_oe
 assign j_xa_in[23:0] =
 	(xa_oe[0])         ? xa_out[23:0]          : // Tom.
 	(fx68k_address_en) ? fx68k_byte_addr[23:0] : // 68000.
@@ -479,6 +510,8 @@ always @(posedge sys_clk) begin
 	open_bus <= dbus;
 end
 
+wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
+
 // External Data Bus
 wire e_dbus_oe = ~xexpl & rw;
 wire e_dbus_we = ~xexpl & ~rw;
@@ -486,20 +519,20 @@ wire e_dbus_we = ~xexpl & ~rw;
 // The external data bus (ED) is driven when RW is high and XEXPL is low.
 wire [7:0] e_dbus_7_0 =
 	(os_rom_oe)         ? os_rom_q[7:0]     : // BIOS.
-	(cart_oe[0])        ? cart_q[7:0]       : // Cart ROM.
+	(cart_oe[0])        ? cart_qt[7:0]      : // Cart ROM.
 	(joy_bus_oe)        ? joy_bus[7:0]      : // Joyports.
 	(adc_oe)            ? adc_data[7:0]     : // Joystick DAC.. no idea what the out value of this should really be.
 	8'hFF;                                    // External bus is pulled up.
 
 wire [7:0] e_dbus_15_8 =
-	(cart_oe[0])        ? cart_q[15:8]      : // Cart ROM.
+	(cart_oe[0])        ? cart_qt[15:8]     : // Cart ROM.
 	(joy_bus_oe)        ? joy_bus[15:8]     : // Joyports.
 	8'hFF;                                    // External bus is pulled up.
 
 wire [15:0] e_dbus_15_0 = {e_dbus_15_8, e_dbus_7_0};
 
 wire [15:0] e_dbus_31_16 =
-	(cart_oe[1])        ? cart_q[31:16]     : // Cart ROM.
+	(cart_oe[1])        ? cart_qt[31:16]    : // Cart ROM.
 	16'hFFFF;                                 // External bus is pulled up.
 
 wire [31:0] e_dbus = (e_dbus_we) ? dbus[31:0] : {e_dbus_31_16, e_dbus_15_8, e_dbus_7_0}; // Internal data bus writing.
@@ -601,8 +634,8 @@ assign j_xgpiol_in[1] = (j_xgpiol_oe[1]) ? j_xgpiol_out[1] : 1'b1;
 assign j_xgpiol_in[2] = (j_xgpiol_oe[2]) ? j_xgpiol_out[2] : 1'b1;
 assign j_xgpiol_in[3] = (j_xgpiol_oe[3]) ? j_xgpiol_out[3] : 1'b1;
 
-assign j_xsck_in = j_xsck_oe ? j_xsck_out : 1'b1;
-assign j_xws_in = j_xws_oe ? j_xws_out : 1'b1;
+assign j_xsck_in = j_xsck_oe ? j_xsck_out : b_xsck_oe ? b_xsck_out : 1'b1;
+assign j_xws_in = j_xws_oe ? j_xws_out : b_xws_oe ? b_xws_out : 1'b1;
 assign j_xvclk_in = j_xvclk_oe ? j_xvclk_out : j_xchrdiv;
 
 wire [1:0] mouseX;
@@ -820,20 +853,25 @@ assign joy_bus[15:8] = (~j_xjoy_in[0]) ? joy[15:8] : 8'b11111111; // Output enab
 assign joy_bus_oe = (~j_xjoy_in[0] | ~j_xjoy_in[1]);
 
 // EEPROM INTERFACE
-assign ee_cs = j_xgpiol_in[1];
-assign ee_sk = j_xgpiol_in[0];
+// Weird, but I don't see how it could work otherwise...
+assign ee_cs = cd_en ? b_ee_cs : j_xgpiol_in[1];
+assign ee_sk = cd_en ? b_ee_sk : j_xgpiol_in[0];
+assign ee_di = cd_en ? b_ee_din : dbus[0];
+wire ee_hintw = xwel[0];
+assign b_ee_dout = ee_do;
 
 // FIXME: ee_di should be e_dbus[0]. The schematic very clearly shows that the eternal bus is
 // connected to the cart slot and thus the EEPROM. However, when the eeprom's address is put onto
 // the address bus to trigger jerry's GPIO pins, it triggers tom to disconnect the external bus. I'm
 // uncertain how this worked on a real system, but I can only guess there was some kind of delay in
 // the eeprom's latching of DI.
-assign ee_di = dbus[0];
 
 eeprom eeprom_inst
 (
 	.sys_clk (sys_clk),
-	.reset   (cold_reset),
+	.resetl  (xresetl),
+	.autosize(auto_eeprom && !cd_en),
+	.hintw   (ee_hintw),
 	.cs      (ee_cs),
 	.sk      (ee_sk),
 	.din     (ee_di),
@@ -1030,6 +1068,69 @@ _j_jerry jerry_inst
 	.sys_clk         (sys_clk)
 );
 
+wire b_ewe0l = xwel[0];
+wire b_ewe2l = xwel[2];
+wire b_eoe0l = xoel[0];
+wire b_eoe1l = xoel[1];
+wire [31:0] b_dout;
+wire b_doe;
+wire b_ee_cs;
+wire b_ee_sk;
+wire b_ee_dout;
+wire b_ee_din;
+wire [31:0] cart_qt = b_doe ? b_dout : cart_q;
+_butch butch_inst
+(
+	.resetl          (xresetl),
+	.clk             (xvclk),
+	.cart_ce_n       (cart_ce_n),
+	.cd_en           (cd_en),
+	.cd_ex           (cd_ex),
+	.eoe0l           (b_eoe0l),
+	.eoe1l           (b_eoe1l),
+	.ewe0l           (b_ewe0l),
+	.ewe2l           (b_ewe2l),
+	.ain             (xa_in[23:0]),
+	.din             (xd_in[31:0]),
+	.dout            (b_dout[31:0]),
+	.doe             (b_doe),
+	.audbus_out      (audbus_out[28:0]),
+	.aud_in          (aud_in[63:0]),
+	.audwaitl        (audwaitl),
+	.i2srxd          (j_xi2srxd),
+	.eint            (j_xeint[0]),
+	.sen             (b_xsck_oe),
+	.sck             (b_xsck_out),
+	.ws              (b_xws_out),
+	.override        (b_override),
+	.aud_ce          (aud_ce),
+	.aud_sess        (aud_sess),
+	.eeprom_cs       (b_ee_cs),
+	.eeprom_sk       (b_ee_sk),
+	.eeprom_dout     (b_ee_din),
+	.eeprom_din      (b_ee_dout),
+	.maxc            (maxc),
+	.addr_ch3        (addr_ch3[23:0]),
+	.toc_addr        (toc_addr),
+	.toc_data        (toc_data),
+	.toc_wr          (toc_wr),
+	.dohacks (dohacks),
+	.hackbus (hackbus),
+	.hackbus1 (hackbus1),
+	.hackbus2 (hackbus2),
+	.overflowo (overflow),
+	.underflowo (underflow),
+	.errflowo (errflow),
+	.unhandledo (unhandled),
+	.sys_clk         (sys_clk)
+);
+wire b_xsck_oe;
+wire b_xsck_out;
+wire b_xws_oe = b_xsck_oe;
+wire b_xws_out;
+wire hackbus;
+wire hackbus1;
+wire hackbus2;
 // Motorola 68000
 wire fx68k_reset_pull, fx68k_halt_pull;
 assign fx68k_halt      = ~fx68k_halt_pull & fx68k_rst;
@@ -1038,7 +1139,7 @@ assign fx68k_dtack_n   = xdtackl;               // Should be able to just use xd
 assign fx68k_vpa_n     = 1'b1;                  // The real Jag has VPA_N on the 68K tied High, which means it's NOT using auto-vector for the interrupt. ElectronAsh.
 assign fx68k_berr_n    = 1'b1;                  // The real Jag has BERR_N on the 68K tied High.
 assign fx68k_ipl_n     = {1'b1, xintl, 1'b1};   // The Jag only uses Interrupt level 2 on the 68000.
-assign fx68k_din       = dbus[15:0];
+assign fx68k_din       = hackbus ? 16'h0 : hackbus1 ? 16'h4e71: hackbus2 ? (dbus[15:0] ^ 16'h0100):dbus[15:0];
 assign fx68k_br_n      = xbrl_in;               // Bus Request.
 assign fx68k_bgack_n   = xba_in;                // Bus Grant Acknowledge.
 assign fx68k_byte_addr = {fx68k_address, 1'b0};
@@ -1094,8 +1195,41 @@ m68kcpu m68k_inst
 // H/W PAL:
 // 68000: 2679   GPU Internal: 12865   GPU External: 13452
 // Mister NTSC:
-// 68000: 2168   GPU Internal: 10819   GPU External: 11380
-
+// 68000: 2168   GPU Internal: 10819   GPU External: 1138
+/*
+fx68k fx68k_inst
+(
+	.clk            (sys_clk),         // input system clock
+	.HALTn          (1'b1),
+	.extReset       (~j_xresetl),      // input
+	.pwrUp          (fx68k_rst),       // input
+	.enPhi1         (fx68k_phi1),      // input
+	.enPhi2         (fx68k_phi2),      // input
+	.eRWn           (fx68k_rw),        // output
+	.ASn            (fx68k_as_n),      // output
+	.LDSn           (fx68k_lds_n),     // output
+	.UDSn           (fx68k_uds_n),     // output
+	.E              (fx68k_e),         // output
+	.VMAn           (fx68k_vma_n),     // output
+	.FC0            (fx68k_fc[0]),     // output
+	.FC1            (fx68k_fc[1]),     // output
+	.FC2            (fx68k_fc[2]),     // output
+//  .oRESETn        (oRESETn),         // output
+//  .oHALTEDn       (oHALTEDn),        // output
+	.DTACKn         (fx68k_dtack_n),   // input
+	.VPAn           (fx68k_vpa_n),     // input - Tied HIGH on the real Jag.
+	.BERRn          (fx68k_berr_n),    // input - Tied HIGH on the real Jag.
+	.BRn            (fx68k_br_n),      // input
+	.BGn            (fx68k_bg_n),      // output
+	.BGACKn         (fx68k_bgack_n),   // input
+	.IPL0n          (fx68k_ipl_n[0]),  // input
+	.IPL1n          (fx68k_ipl_n[1]),  // input
+	.IPL2n          (fx68k_ipl_n[2]),  // input
+	.iEdb           (fx68k_din),       // input
+	.oEdb           (fx68k_dout),      // output
+	.eab            (fx68k_address)    // output
+);
+*/
 // VIDEO / 15 KHz (native) output...
 assign vga_r = xr[7:0];
 assign vga_g = xg[7:0];
@@ -1147,7 +1281,9 @@ endmodule
 module eeprom
 (
 	input  sys_clk,
-	input  reset, // This reset represents a power cycle, not a soft reset.
+	input  resetl,
+	input  autosize,
+	input  hintw,
 	input  cs,
 	input  sk,
 	input  din,
@@ -1169,20 +1305,26 @@ module eeprom
 `define EE_WR_END    3'b111
 
 reg          sk_prev = 1'b0;
+reg          ee_type = 1'b0;   // 0 = 128 bytes/9bit ir -- 1 = 2048 bytes/13bit ir 
+reg          detect = 1'b0; 
+// autosize detect assumes first command after reset is pulsed cs signal then 9 or 13 bit command followed by cs or reads
+// After cs then 9 bits, if next is not cs or write then is ee_type 0. Otherwise type 1.
 //reg [15:0]   mem[0:(1<<6)-1];
 reg          ewen = 1'b0;
 reg [2:0]    status = `EE_IDLE;
 reg [3:0]    cnt = 4'd0;           // Bit counter
-reg [8:0]    ir = 9'd0;            // Instruction Register
+reg [12:0]   ir = 13'd0;           // Instruction Register
 reg [15:0]   dr = 16'd0;           // Data Register
 reg          r_dout = 1'b1;        // Data Out
 assign       dout = r_dout;
 
-reg [5:0]    wraddr = 6'b000000;
+reg [9:0]    wraddr = 10'b0000000000;
 reg [15:0]   wrdata = 16'hFFFF;
 reg          wrloop = 1'b0;
 
-assign       bram_addr = {4'h0,status[2] ? wraddr : { ir[4:0], din }};
+wire [5:0]   irhi = ee_type ? ir[12:7] : ir[8:3];
+
+assign       bram_addr = {status[2] ? wraddr : ee_type ? { ir[8:0], din } : { 4'h0,ir[4:0], din }};
 assign       bram_data = wrdata;
 assign       bram_wr = bram_wr_;
 reg          bram_wr_;
@@ -1190,82 +1332,106 @@ reg          bram_wr_;
 always @(posedge sys_clk) begin
 	sk_prev <= sk;
 	bram_wr_ <= 1'b0;
-	if (reset)
-		ewen <= 1'b0;
-	if (~cs || reset) begin
+	if (~cs || ~resetl) begin
 		// Reset
 		status <= `EE_IDLE;
 		cnt <= 4'd0;
-		ir <= 9'd0;
+		ir <= 13'd0;
 		dr <= 16'd0;
 		r_dout <= 1'b1;
-		wraddr <= 6'b000000;
+		wraddr <= 10'b0000000000;
 		wrdata <= 16'hFFFF;
 		wrloop <= 1'b0;
+		if (detect) begin
+			if (ir[9]) begin
+				ee_type <= 1'b0;
+				detect <= 1'b0;
+			end
+			if (ir[12]) begin
+				ee_type <= 1'b1;
+				detect <= 1'b0;
+			end
+		end
+		if (~resetl) begin
+			ewen <= 1'b0;
+			ee_type <= 1'b0;
+			detect <= autosize;
+		end
+
 
 	end else if (~sk_prev & sk) begin
+		if (ir[9]) begin
+			detect <= 1'b0;
+		end
 		if (status == `EE_IDLE) begin
-			ir <= { ir[7:0], din };
-			if (ir[7]) begin // Instruction complete
-				if (ir[6:5] == 2'b10) begin
+			ir <= { ir[11:0], din };
+			if (irhi[4]) begin // Instruction complete
+				if (irhi[3:2] == 2'b10) begin
 					// READ
 					dr[15:0] <= bram_q[15:0];
 					r_dout <= 1'b0; // Dummy bit
 					status <= `EE_READ;
-				end else if (ir[6:3] == 4'b0011) begin
+				end else if (irhi[3:0] == 4'b0011) begin
 					// EWEN
 					ewen <= 1'b1;
 					status <= `EE_IDLE;
-				end else if (ir[6:5] == 2'b11) begin
+				end else if (irhi[3:2] == 2'b11) begin
 					// ERASE
 					status <= `EE_WR_BEGIN;
-				end else if (ir[6:5] == 2'b01) begin
+				end else if (irhi[3:2] == 2'b01) begin
 					// WRITE
 					status <= `EE_DATA;
-				end else if (ir[6:3] == 4'b0010) begin
+				end else if (irhi[3:0] == 4'b0010) begin
 					// ERAL
 					status <= `EE_WR_BEGIN;
-				end else if (ir[6:3] == 4'b0001) begin
+				end else if (irhi[3:0] == 4'b0001) begin
 					// WRAL
 					status <= `EE_DATA;
-				end else if (ir[6:3] == 4'b0000) begin
+				end else if (irhi[3:0] == 4'b0000) begin
 					// EWEN
 					ewen <= 1'b0;
 					status <= `EE_IDLE;
 				end
 			end
 		end else if (status == `EE_DATA) begin
+			detect <= 1'b0;
 			dr <= { dr[14:0], din };
 			cnt <= cnt + 4'd1;
 			if (cnt == 4'b1111) begin
 				status <= `EE_WR_BEGIN;
 			end
 		end else if (status == `EE_READ) begin
+			detect <= 1'b0;
 			r_dout <= dr[15];
 			dr <= { dr[14:0], 1'b0 };
 		end
+	end else if (~sk && ~hintw && detect && ir[8]) begin
+		ee_type <= 1'b1; //not read means 13 bit command
+		detect <= 1'b0;
+		status <= `EE_IDLE; // continue in progress command READ or EWEN
 	end else if (status[2]) begin // Internal processing (writes)
+		detect <= 1'b0;
 		if (status == `EE_WR_BEGIN) begin
 			r_dout <= 1'b0; // Busy
 			status <= `EE_WR_WRITE;
-			if (ir[7:6] == 2'b11) begin
+			if (irhi[4:3] == 2'b11) begin
 				// ERASE
-				wraddr <= ir[5:0];
+				wraddr <= ee_type ? ir[9:0] : {4'h0,ir[5:0]};
 				wrloop <= 1'b0;
 				wrdata <= 16'hFFFF;
-			end else if (ir[7:6] == 2'b01) begin
+			end else if (irhi[4:3] == 2'b01) begin
 				// WRITE
-				wraddr <= ir[5:0];
+				wraddr <= ee_type ? ir[9:0] : {4'h0,ir[5:0]};
 				wrloop <= 1'b0;
 				wrdata <= dr;
-			end else if (ir[7:4] == 4'b0010) begin
+			end else if (irhi[4:1] == 4'b0010) begin
 				// ERAL
-				wraddr <= 6'b000000;
+				wraddr <= 10'b0000000000;
 				wrloop <= 1'b1;
 				wrdata <= 16'hFFFF;
-			end else if (ir[7:4] == 4'b0001) begin
+			end else if (irhi[4:1] == 4'b0001) begin
 				// WRAL
-				wraddr <= 6'b000000;
+				wraddr <= 10'b0000000000;
 				wrloop <= 1'b1;
 				wrdata <= dr;
 			end
@@ -1278,8 +1444,10 @@ always @(posedge sys_clk) begin
 			if (~wrloop) begin
 				status <= `EE_WR_END;
 			end else begin
-				wraddr <= wraddr + 6'd1;
-				if (wraddr == 6'b111111) begin
+				wraddr <= wraddr + 10'd1;
+				if ((wraddr == 10'b1111111111) && (ee_type)) begin
+					status <= `EE_WR_END;
+				end else if ((wraddr[5:0] == 6'b111111) && (!ee_type)) begin
 					status <= `EE_WR_END;
 				end else begin
 					status <= `EE_WR_WRITE;
