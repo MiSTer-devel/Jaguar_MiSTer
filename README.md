@@ -11,13 +11,17 @@ Both analog video and HDMI are working, but the sync timings still need a few tw
 (or might not display correctly on an analog monitor.)
 
 
-The proper Jag BIOS is now being used. If a cart is failing the checksum, a patch can skip the failure by selecting it in the menu.
+The proper Jag BIOS is now being used. If a cart is failing the checksum, a patch can skip the failure by selecting it in the menu. Testing was done with the M version of the BIOS.
 
 A RESET (or new cart ROM load) is required after changing the Checksum patch option.
 
 The patch allows more games to be tested with the BIOS, and shows the spinning cube logo now.
 
 The BIOS file (usually "jagboot.rom") should be renamed to boot.rom, then copied into the Jaguar folder on the SD card.
+
+The CD BIOS must be loaded manually When using CDs (including VLM).
+
+For now, a binary cue file needs to be loaded to go with the CD image. The default assumes ULS formatted CDs with the 6 individual bin files loaded sequentially. The binary cue files are temporary until it is pulled from the image instead.
 
 
 I've added a video mode switch to the OSD menu, which is normally a pin on the Jag motherboard that gets tied high or low.

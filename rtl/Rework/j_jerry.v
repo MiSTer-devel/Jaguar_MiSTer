@@ -735,7 +735,7 @@ _j_dac dac_inst
 
 // --- Compiler-generated local PE for BUS dsprd[0]
 // Ternaries/muxes are better than stacking ors; assumes no bus conflicts
-assign dsprd_out[15:0] = (dsprd_dsp_oe ? dsprd_dsp_out[15:0] : dsprd_i2s_oe ? dsprd_i2s_out[15:0] : 16'h0);
+assign dsprd_out[15:0] = (dsprd_i2s_oe ? dsprd_i2s_out[15:0] : (dsprd_dsp_oe ? dsprd_dsp_out[15:0] : 16'h0)); // if i2s oe then dsprd_dsp_oe is lying (only outputing a copy of i2s on 31:16. Not driving 15:0) Fix?
 assign dsprd_oe = dsprd_dsp_oe | dsprd_i2s_oe;
 
 // --- Compiler-generated local PE for BUS dr[0]
