@@ -80,7 +80,6 @@ always @(posedge clk) begin
 end
 
 // Main state machine for quadrature outputs and accumulator processing
-// Combined into a single always block to avoid multiple drivers
 always @(posedge clk or posedge reset) begin
     if (reset) begin
         xaccum <= 0;

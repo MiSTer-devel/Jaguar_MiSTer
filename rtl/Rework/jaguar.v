@@ -668,15 +668,15 @@ jag_controller_mux controller_mux_1
 	.col_n      (~j_xjoy_in[3] ? u374_reg[3:0] : 4'b1111),
 	.row_n      (joy1_row_n),
 
-	.but_right  (joystick_0[0] | sp_out0[0]),
-	.but_left   (joystick_0[1] | sp_out0[1]),
-	.but_down   (joystick_0[2]),
-	.but_up     (joystick_0[3]),
-	.but_a      (joystick_0[4]),
-	.but_b      (joystick_0[5]),
+	.but_right  ((!mouse_ena_1) ? joystick_0[0] | sp_out0[0] : mouseY[0]),
+	.but_left   ((!mouse_ena_1) ? joystick_0[1] | sp_out0[1] : mouseY[1]),
+	.but_down   ((!mouse_ena_1) ? joystick_0[2] : mouseX[1]),
+	.but_up     ((!mouse_ena_1) ? joystick_0[3] : mouseX[0]),
+	.but_a      ((!mouse_ena_1) ? joystick_0[4] : ~mouseButton_l),
+	.but_b      ((!mouse_ena_1) ? joystick_0[5] : ~mouseButton_m),
 	.but_c      (joystick_0[6]),
 	.but_option (joystick_0[7]),
-	.but_pause  (joystick_0[8]),
+	.but_pause  ((!mouse_ena_1) ? joystick_0[8] : ~mouseButton_r),
 	.but_1      (joystick_0[9]),
 	.but_2      (joystick_0[10]),
 	.but_3      (joystick_0[11]),
@@ -698,15 +698,15 @@ jag_controller_mux controller_mux_2
 	.col_n      (~j_xjoy_in[3] ? joy2_col_reversed : 4'b1111),
 	.row_n      (joy2_row_n),
 
-	.but_right  (joystick_1[0] | sp_out1[0]),
-	.but_left   (joystick_1[1] | sp_out1[1]),
-	.but_down   (joystick_1[2]),
-	.but_up     (joystick_1[3]),
-	.but_a      (joystick_1[4]),
-	.but_b      (joystick_1[5]),
+	.but_right  ((!mouse_ena_2) ? joystick_1[0] | sp_out1[0] : mouseY[0]),
+	.but_left   ((!mouse_ena_2) ? joystick_1[1] | sp_out1[1] : mouseY[1]),
+	.but_down   ((!mouse_ena_2) ? joystick_1[2] : mouseX[1]),
+	.but_up     ((!mouse_ena_2) ? joystick_1[3] : mouseX[0]),
+	.but_a      ((!mouse_ena_2) ? joystick_1[4] : ~mouseButton_l),
+	.but_b      ((!mouse_ena_2) ? joystick_1[5] : ~mouseButton_m),
 	.but_c      (joystick_1[6]),
 	.but_option (joystick_1[7]),
-	.but_pause  (joystick_1[8]),
+	.but_pause  ((!mouse_ena_2) ? joystick_1[8] : ~mouseButton_r),
 	.but_1      (joystick_1[9]),
 	.but_2      (joystick_1[10]),
 	.but_3      (joystick_1[11]),
@@ -810,12 +810,12 @@ end
 assign joy[0] = ee_do;
 assign joy[7:1] = ~j_xjoy_in[3] ? u374_reg[7:1] : 7'b1111_111;      // Port 1, pins 4:2. / Port 2, pins 4:1.
 
-assign joy[8]  = (!mouse_ena_1) ? joy1_row_n[5] : mouseX[0];        // Port 1, pin 14. Mouse XB.
-assign joy[9]  = (!mouse_ena_1) ? joy1_row_n[4] : mouseX[1];        // Port 1, pin 13. Mouse XA.
-assign joy[10] = (!mouse_ena_1) ? joy1_row_n[3] : mouseY[1];        // Port 1, pin 12. Mouse YA / Rotary Encoder XA.
-assign joy[11] = (!mouse_ena_1) ? joy1_row_n[2] : mouseY[0];        // Port 1, pin 11. Mouse YB / Rotary Encoder XB.
-assign b[1]    = (!mouse_ena_1) ? joy1_row_n[1] : mouseButton_l;    // Port 1, pin 10. B1. Mouse Left Button / Rotary Encoder button.
-assign b[0]    = (!mouse_ena_1) ? joy1_row_n[0] : mouseButton_r;    // Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
+assign joy[8]  = joy1_row_n[5];        // Port 1, pin 14. Mouse XB.
+assign joy[9]  = joy1_row_n[4];        // Port 1, pin 13. Mouse XA.
+assign joy[10] = joy1_row_n[3];        // Port 1, pin 12. Mouse YA / Rotary Encoder XA.
+assign joy[11] = joy1_row_n[2];        // Port 1, pin 11. Mouse YB / Rotary Encoder XB.
+assign b[1]    = joy1_row_n[1];    		// Port 1, pin 10. B1. Mouse Left Button / Rotary Encoder button.
+assign b[0]    = joy1_row_n[0];    		// Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
 
 // Standard Jag controller mapping...
 // http://arcarc.xmission.com/Web%20Archives/Deathskull%20%28May-2006%29/games/tech/jagcont.html
@@ -823,12 +823,12 @@ assign b[0]    = (!mouse_ena_1) ? joy1_row_n[0] : mouseButton_r;    // Port 1, p
 // Mouse / Rotary Encoder hookup info, and test programs...
 // http://mdgames.de/jag_end.htm
 //
-assign joy[12] = (!mouse_ena_2) ? joy2_row_n[5] : mouseX[0];        // Port 2, pin 14.
-assign joy[13] = (!mouse_ena_2) ? joy2_row_n[4] : mouseX[1];        // Port 2, pin 13.
-assign joy[14] = (!mouse_ena_2) ? joy2_row_n[3] : mouseY[1];        // Port 2, pin 12.
-assign joy[15] = (!mouse_ena_2) ? joy2_row_n[2] : mouseY[0];        // Port 2, pin 11.
-assign b[3]    = (!mouse_ena_2) ? joy2_row_n[1] : mouseButton_l;    // Port 2, pin 10. B3.
-assign b[2]    = (!mouse_ena_2) ? joy2_row_n[0] : mouseButton_r;    // Port 2, pin 6. B2/Light Pen 1.
+assign joy[12] = joy2_row_n[5];        // Port 2, pin 14.
+assign joy[13] = joy2_row_n[4];        // Port 2, pin 13.
+assign joy[14] = joy2_row_n[3];        // Port 2, pin 12.
+assign joy[15] = joy2_row_n[2];        // Port 2, pin 11.
+assign b[3]    = joy2_row_n[1];    		// Port 2, pin 10. B3.
+assign b[2]    = joy2_row_n[0];    		// Port 2, pin 6. B2/Light Pen 1.
 
 assign b[4] = ntsc;             // 0=PAL, 1=NTSC
 assign b[5] = 1'b1;             // 256 (number of columns of the DRAM)
