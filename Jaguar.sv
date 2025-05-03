@@ -272,7 +272,6 @@ localparam CONF_STR = {
 	"O78,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O9A,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 	"OI,Crop,No,Yes;",
-	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"-;",
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
