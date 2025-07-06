@@ -23,10 +23,12 @@ module _butch
 	output ws,
 	output eint,
 	output override,
-	output [28:0] audbus_out,
+	output [29:0] audbus_out,
 	input  [63:0] aud_in,
+	input  [63:0] aud_cmp,
 	output aud_ce,
 	input  audwaitl,
+	input  aud_cbusy,
 	input [8:0] toc_addr,
 	input [15:0] toc_data,
 	input toc_wr,
@@ -50,7 +52,7 @@ output unhandledo,
 
 wire wet = !cart_ce_n && !(ewe0l && ewe2l);
 wire oet = !cart_ce_n && !(eoe0l && eoe1l);
-//BUTCH     equ  $DFFF00	c; base of Butch=interrupt control register, R/W
+//BUTCH     equ  $DFFF00	; base of Butch=interrupt control register, R/W
 //DSCNTRL   equ  BUTCH+4	; DSA control register, R/W
 //DS_DATA   equ  BUTCH+$A	; DSA TX/RX data, R/W
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
@@ -63,7 +65,7 @@ wire oet = !cart_ce_n && !(eoe0l && eoe1l);
 //I2SDAT2   equ  BUTCH+$28	; i2s FIFO data
 //EEPROM    equ  BUTCH+$2C	; interface to CD-eeprom
 reg [31:0] butch_reg [0:11];
-//BUTCH     equ  $DFFF00	c; base of Butch=interrupt control register, R/W
+//BUTCH     equ  $DFFF00	; base of Butch=interrupt control register, R/W
 //assign eint = (!butch_reg[0][0]) || (!fifo_int && !frame_int &&!sub_int && !tbuf_int && !rbuf_int);
 assign eint = (butch_reg[0][0]) && (fifo_int || frame_int || sub_int || tbuf_int || rbuf_int);
 wire fifo_int = butch_reg[0][9] && butch_reg[0][1];
@@ -93,6 +95,7 @@ wire cdkartpullreset = butch_reg[0][20];
 //	cmpi.w	#$402,d0	;was it focus error? (no disc)
 //	move.w	DS_DATA,d0
 //	move.l	DSCNTRL,d0
+// DSA Error Codes
 // 00h No error
 // 02h Focus error, or no disc
 // 07h Subcode error, no valid subcode
@@ -111,6 +114,102 @@ wire cdkartpullreset = butch_reg[0][20];
 // 2Bh Communication error
 // 2Ch Reserved - Tray error??
 // 2Dh HF Detector Error
+
+// DSA Commands
+// 01h Play title                                              - servo - Title number (hex)
+// 02h Stop                                                    - servo - xx
+// 03h Read TOC                                                - servo - 00
+// 04h Pause                                                   - mode  - xx
+// 05h Pause Release                                           - mode  - xx
+// 06h Search forward at low speed, with Border flag cleared   - servo - 00h
+// 06h Search forward at high speed, with Border flag cleared  - servo - 01h
+// 06h Search forward at low speed, with Border flag set       - servo - 10h
+// 06h Search forward at high speed, with Border flag set      - servo - 11h
+// 07h Search backward at low speed, with Border flag cleared  - servo - 00h
+// 07h Search backward at high speed, with Border flag cleared - servo - 01h
+// 07h Search backward at low speed, with Border flag set      - servo - 10h
+// 07h Search backward at high speed, with Border flag set     - servo - 11h
+// 08h Search release                                          - servo -
+// 09h Get title length                                        - info  - Track number (hex)
+// 0Ah Reserved
+// 0Bh Reserved
+// 0Dh Get complete time                                       - info  - xx
+// 10h Goto time                                               - servo - Abs. min. (hex)
+// 11h Goto time                                               - servo - Abs. sec. (hex)
+// 12h Goto time (start)                                       - servo - Abs. frm. (hex)
+// 14h Read Long TOC                                           - servo - 00
+// 15h Set mode                                                - mode  - Mode settings
+// 16h Get last error                                          - info  - xx
+// 17h Clear error                                             - info  - xx
+// 18h Spin up                                                 - servo - 00
+// 20h Play A-time till B-time                                 - servo - Absolute start time minutes (hex)
+// 21h Play A-time till B-time                                 - servo - Absolute start time seconds (hex)
+// 22h Play A-time till B-time                                 - servo - Absolute start time frames (hex)
+// 23h Play A-time till B-time                                 - servo - Absolute stop time minutes (hex)
+// 24h Play A-time till B-time                                 - servo - Absolute stop time seconds (hex)
+// 25h Play A-time till B-time (start)                         - servo - Absolute stop time frames (hex)
+// 26h Release A->B time                                       - mode  - xx
+// 30h Get Disc Identifiers                                    - info  - xx
+// 40h Reserved
+// 41h Reserved
+// 42h Reserved
+// 43h Reserved
+// 44h Reserved
+// 50h Get disc status                                         - info  - xx
+// 51h Set volume                                              - mode  - Volume level (hex)
+// 52h Reserved
+// 54h Reserved
+// 6Ah Clear TOC                                               - mode  - xx
+// 70h Set DAC mode                                            - mode  - DAC mode
+// A0h-AFh Reserved for Vendor Unique
+
+// DSA Reponses
+// 01h Found                - servo - Goto title Found (xx)/Goto time Found (40h)/Paused (41h)/Paused Released (42h)/Spinned Up (43h)/Play A-B Start Found (44h)/Play A-B End Found (45h)
+// 02h Stopped              - servo - xx
+// 03h Disc status          - info  - No disc present / disc present,Disc size 8cm / 12 cm,High/low reflectance disc,Finalised/unfinalised disc
+// 04h Error values         - info  - Error value
+// 09h Length of title      - info  - Lsb byte of seconds of requested title (hex)
+// 0Ah Length of title      - info  - Msb byte of seconds of requested title (hex)
+// 0Bh Reserved             - servo
+// 0Ch Reserved             - servo
+// 0Dh Reserved             - servo
+// 10h Actual title         - servo - New track number (hex)
+// 11h Actual index         - servo - New index number (hex)
+// 12h Actual minutes       - servo - New minutes (hex)
+// 13h Actual seconds       - servo - New seconds (hex)
+// 14h Absolute time        - info  - New abs. minutes (hex)
+// 15h Absolute time        - info  - New abs. seconds (hex)
+// 16h Absolute time        - info  - New abs. frames (hex)
+// 17h Mode status          - info  - Mode settings
+// 20h TOC values           - servo - Min. track number (hex)
+// 21h TOC values           - servo - Max. track number (hex)
+// 22h TOC values           - servo - Start time lead-out min. (hex)
+// 23h TOC values           - servo - Start time lead-out sec. (hex)
+// 24h TOC values           - servo - Start time lead-out frm. (hex)
+// 26h A->B Time released   - mode  - xx
+// 30h Disc identifiers     - info  - Disc identifier 0 of the CD
+// 31h Disc identifiers     - info  - Disc identifier 1 of the CD
+// 32h Disc identifiers     - info  - Disc identifier 2 of the CD
+// 33h Disc identifiers     - info  - Disc identifier 3 of the CD
+// 34h Disc identifiers     - info  - Disc identifier 4 of the CD
+// 51h Volume level         - mode  - Volume level (hex)
+// 52h Reserved             -
+// 54h Reserved             -
+// 5Dh Reserved             -
+// 5Eh Reserved             -
+// 5Fh Reserved             -
+// 60h Long TOC values      - servo - Track number (hex)
+// 61h Long TOC values      - servo - Control & Address field
+// 62h Long TOC values      - servo - Start time minutes (hex)
+// 63h Long TOC values      - servo - Start time seconds (hex)
+// 64h Long TOC values      - servo - Start time frames (hex)
+// 65h Reserved             -
+// 66h Reserved             -
+// 67h Reserved             -
+// 68h Reserved             -
+// 6Ah TOC Cleared          - info  - xx
+// 70h DAC mode             - mode  - DAC mode
+// F0h Servo Version Number - servo - Servo version number
 
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
 wire i2s_drive = butch_reg[4][0];
@@ -192,7 +291,7 @@ reg aud_rd;
 reg old_aud_rd;
 reg old_aud_rd2;
 reg old_aud_rd3;
-assign audbus_out = aud_adds[28:0]; // max 64MB - old_aud_rd will delay one cycle to match aud_adds delay
+assign audbus_out = aud_adds[29:0]; // max 64MB - old_aud_rd will delay one cycle to match aud_adds delay
 assign aud_ce = cd_en && old_aud_rd2; // give aud_rd two cycles for track offset fetch and addition
 assign addr_ch3 = maxc ? add_ch3 : max_ch3;
 
@@ -285,6 +384,11 @@ wire cdrommd = mode[3];//audiomd==0
 wire attiabs = mode[4];
 wire attirel = mode[5];
 wire pausetr = mode[6];
+// 5 - 4 = Actual Title, Time, Index (ATTI) setting
+// 00 = no title, index or time send during play modes
+// 01 = sending title, index and absolute time (min/sec)
+// 10 = sending title, index and relative time (min/sec)
+// 11 = reserved
 
 reg updabs;
 reg [7:0] seek;
@@ -305,6 +409,9 @@ reg [5:0] subtseconds; // 0-59
 reg [5:0] subtrseconds; // 0-59
 reg [15:0] last_ds;
 reg [31:0] seek_delay;
+//wire [31:0] seek_delay_set = 31'h7000; // TODO: Improve
+wire [31:0] seek_delay_set = 31'h20000; // TODO: Improve
+
 reg overflow;
 reg underflow;
 reg errflow;
@@ -476,7 +583,7 @@ reg pastcdbios;
 
 always @(posedge sys_clk)
 begin
-	aud_adds[28:0] <= aud_add[28:0] + cuet_dout[28:0]; // old_aud_rd will delay one cycle to match aud_adds delay
+	aud_adds[29:0] <= aud_add[29:0] + cuet_dout[29:0]; // old_aud_rd will delay one cycle to match aud_adds delay
 	cuelast[23:0] <= {carrys?cuel_dout[23:16]-8'h1:cuel_dout[23:16],carrys?8'h3B:carryf?cuel_dout[15:8]-8'h1:cuel_dout[15:8],carryf?8'h4A:cuel_dout[7:0]-8'h1};
 	recrc <= 1'b0;
 	updresp <= 1'b0;
@@ -627,10 +734,10 @@ begin
 		cur_aminutes <= cues_dout[22:16];
 	end
 	if (seek != 8'h0) begin
-		if (seek[7]) begin
-			seek[0] <= !seek[0];
+		if (seek[7]) begin       // Loop looking for cues_addr starting at last one
+			seek[0] <= !seek[0];  // These two settings do alternate between updating cues_addr and using it
 			seek[1] <= seek[0];
-			if (!seek[1]) begin
+			if (!seek[1]) begin   // Check if cues_addr is before/after seek time
 				if ((cues_addr == 7'h0) || ({sminutes,2'b00,sseconds,1'b0,sframes} >= (cuep_dout[22:0]))) begin // fix this
 					seek <= 8'h7F;
 					track_idx <= cues_addr;
@@ -650,7 +757,7 @@ begin
 						cur_frames <= sframes - cuep_dout[6:0] + ((sframes >= cuep_dout[6:0]) ? 7'h0 : 7'h4B);
 						subtseconds <= (cuep_dout[13:8] + ((sframes >= cuep_dout[6:0]) ? 6'h0 : 6'h1));
 						gframes <= 3'h0;
-						if ({sminutes,2'b00,sseconds,1'b0,sframes} < (cuep_dout[22:0])) begin
+						if ({sminutes,2'b00,sseconds,1'b0,sframes} < (cues_dout[22:0])) begin
 							cur_rframes <= sframes - cues_dout[6:0] + ((sframes >= cues_dout[6:0]) ? 7'h0 : 7'h4B);
 							subtrseconds <= (cues_dout[13:8] + ((sframes >= cues_dout[6:0]) ? 6'h0 : 6'h1));
 						end else begin
@@ -667,7 +774,7 @@ begin
 				end
 			end
 		end else if (seek[6]) begin
-			if (seek[0]) begin
+			if (seek[0]) begin   // Using seek0 to delay one cycle. necessary?
 				seek[0] <= 1'b0;
 				cur_seconds <= sseconds - subtseconds + ((sseconds >= subtseconds) ? 6'h0 : 6'h3C);
 				cur_minutes <= sminutes - cuep_dout[22:16] - ((sseconds >= subtseconds) ? 6'h0 : 6'h1);
@@ -698,16 +805,18 @@ begin
 			seek[1] <= 1'b0;
 			taud2_add[29:8] <= {taud_add[18:0],3'h0} + {taud_add[18:0]};
 			taud3_add[23:4] <= {taud_add[18:0],1'h0} + {taud_add[18:0]};
-//			seek_delay <= 31'h3F00;
-			seek_delay <= 31'h7000; // TODO: Improve
+			seek_delay <= seek_delay_set;
 		end else if (seek[0]) begin
 			if (seek_delay != 0) begin
 				seek_delay <= seek_delay - 16'h1;
-				if (seek_delay == 16'h1) begin
-					seek[0] <= 1'b0;
-					// *2352=<<11 + <<8 + <<5 + <<4
+				if (seek_delay == seek_delay_set) begin
 					aud_add[29:0] <= {{taud2_add[29:8],4'h0} + {taud3_add[23:4]},4'h0};//[31:30] are always 0
 					aud_rd <= 1'b1;
+				end else if ((seek_delay == 31'h1) && (aud_cbusy)) begin
+					seek_delay <= 31'h1;
+				end else if (seek_delay == 31'h1) begin
+					seek[0] <= 1'b0;
+					// *2352=<<11 + <<8 + <<5 + <<4
 					cur_samples <= 10'h0;
 					splay <= 5'h5;
 					splay[4] <= i2s_jerry || i2s_fifo_enabled;
@@ -744,23 +853,18 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 		end
 		if (splay != 5'h0) begin
 			if (splay[3:0] == 4'h5) begin
-				if (!aud_busy) begin
+				if (!aud_busy && !aud_cbusy) begin
 					//aud_add <= 32'h0; // Should be already set
 					aud_rd <= 1'b1;     // Request Fifo
 					splay[3:0] <= 4'h4;
 				end
 			end else if (splay[3:0] == 4'h4) begin
-				if (!aud_busy) begin
+				if (!aud_busy && !aud_cbusy) begin
 					fd <= 64'h0;
-					fifo[3] <= 'h0;
-					fifo[2] <= 'h0;
 					fifo[1] <= 'h0;
-					fifo[0] <= aud_in;     // Fill fifo
-					aud_add <= aud_add + 4'h8;
-					aud_rd <= 1'b1;     // Request next fifo for when fifo used
-					//track_idx will never change here.
+					fifo[0] <= 'h0;
 					if (!splay[4]) begin
-						splay <= 5'h0;
+						splay <= 5'h0; // Does this work? Seems like it might skip the first read when splay called again later. Where is transition to play if not here?
 					end else begin
 						splay <= 5'h3;
 					end
@@ -795,10 +899,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				end else if (seek != 8'h0) begin
 					sdin[15:0] <= 16'h0;
 				end else begin
-//					faddr[1:0] <= faddr[1:0] + 2'h1;
 					i2s1w <= !wsout;
 					i2s2w <= wsout;
-//					fdata[15:0] = faddr[1] ? (faddr[0] ? {fifo[39:32],fifo[47:40]} : {fifo[55:48],fifo[63:56]}) : (faddr[0] ? {fifo[07:00],fifo[15:8]} : {fifo[23:16],fifo[31:24]});
 					fdata[15:0] = fd[15:0];
 					fd <= {16'h0,fd[63:16]};
 					sdin[15:0] <= (gframes[2:1] != 2'h0) ? 16'h0 : fdata[15:0];
@@ -818,34 +920,42 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 						valid <= 1'b0;
 					end
 					if ((faddr[1:0] == 2'b01) && (gframes[2:1] == 2'h0)) begin // handles throwing away first 16 bit value and using fifth in its place (plus endian/ordering nonsense)
-						fd[15:0] <= {fifo[3][23:16],fifo[3][31:24]}; // use next fifo; replaces current set below
+						fd[15:0] <= {fifo[1][23:16],fifo[1][31:24]}; // use next fifo; replaces current set below
+//						fd[15:0] <= {fifo[0][23:16],fifo[0][31:24]}; // use next fifo; replaces current set below
 					end
 					if ((faddr[1:0] == 2'b11) && (gframes == 3'h0)) begin //Assumes fifo filled before first entrance and next fifo data already pointed at.
-						fd <= {fifo[3][39:32],fifo[3][47:40], fifo[3][23:16],fifo[3][31:24], fifo[3][07:00],fifo[3][15:8], fifo[3][55:48],fifo[3][63:56]}; // endian/ordering nonsense
-						fifo[3] <= fifo[2];
-						fifo[2] <= fifo[1];
-						fifo[1] <= fifo[0];
+						fd <= {fifo[1][39:32],fifo[1][47:40], fifo[1][23:16],fifo[1][31:24], fifo[1][07:00],fifo[1][15:8], fifo[1][55:48],fifo[1][63:56]}; // endian/ordering nonsense
+//						fd <= {fifo[0][39:32],fifo[0][47:40], fifo[0][23:16],fifo[0][31:24], fifo[0][07:00],fifo[0][15:8], fifo[0][55:48],fifo[0][63:56]}; // endian/ordering nonsense
+						fifo[1] <= fifo[0]; // is this cache necessary or can directly use 0?
 						fifo[0] <= aud_in;
+//					if (aud_in != aud_cmp) begin
+//						underflow <= 1'b1;
+//					end
 						if ({cur_aminutes,2'b00,cur_aseconds,1'b0,cur_aframes} < cuep_dout[22:0]) begin
 							fifo[1] <= 64'h0;
-							fifo[0] <= fifo[0];
+							fifo[0] <= 64'h0;
 						end else if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} >= cuelast[22:0]) begin
+							aud_add <= aud_add + 4'h8;
 							if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} > cuelast[22:0]) begin
 								fifo[0] <= 64'h0;
-							end
-							if ({cur_samples[9:1],1'b0} == 10'd584) begin
 								aud_add[29:0] <= 30'h0;
 								cuet_addr <= track_idx + 7'h1;
-							end else if ({cur_samples[9:1],1'b0} == 10'd586) begin
-								aud_add <= aud_add + 4'h8;
-								fifo[0] <= aud_in; // pull in above
+					end else if (aud_in != aud_cmp) begin
+						underflow <= 1'b1;
+							end
+							if ({cur_samples[9:1],1'b0} == 10'd586) begin
+								aud_add[29:0] <= 30'h0;
+								cuet_addr <= track_idx + 7'h1;
 							end
 						end else begin
 							aud_add <= aud_add + 4'h8;
+					if (aud_in != aud_cmp) begin
+						underflow <= 1'b1;
+					end
 						end
 						aud_rd <= 1'b1;
 						if (aud_busy) begin
-							underflow <= 1'b1;
+//							underflow <= 1'b1;
 						end
 					end
 					if (wsout) begin
@@ -889,6 +999,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 								cur_rseconds <= 6'h0;
 								cur_rminutes <= 7'h0;
 								cues_addr <= track_idx + 7'h1;
+//						splay <= 5'h5;
 							end
 							cur_aframes <= cur_aframes + 7'h1;
 							if (cur_aframes == 7'd74) begin
@@ -914,7 +1025,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				butch_reg[4'h0][31:16] <= din[31:16];
 			end
 			if (!ewe0l) begin
-				butch_reg[4'h0][15:8] <= butch_reg[4'h0][15:8] & ~din[15:8];
+				butch_reg[4'h0][15:8] <= butch_reg[4'h0][15:8] & ~{din[15:14],2'b00,din[11:8]};
 				butch_reg[4'h0][7:0] <= din[7:0];
 				// interrupt control
 			end
@@ -1384,14 +1495,17 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 	end
 	if (old_doe_ds && !doe_ds) begin
 		ds_resp_idx <= ds_resp_idx + 3'h1;
-		if (ds_resp_size == ds_resp_idx + 3'h1) begin
+		if (ds_resp_size == 3'h0) begin
+			ds_resp_idx <= 3'h0;
+		end else if (ds_resp_size == ds_resp_idx + 3'h1) begin
 			ds_resp_idx <= 3'h0;
 			if (ds_resp_loop != 7'h0) begin
 				ds_resp_loop <= ds_resp_loop - 7'h1;
 				cues_addr <= cues_addr + 7'h1;
 				updrespa <= 1'b1;
 			end else begin
-				butch_reg[0][13] <= 1'b0; // &= ~0x2000
+				ds_resp_size <= 3'h0;
+//				butch_reg[0][13] <= 1'b0; // &= ~0x2000
 			end
 		end
 	end	
@@ -1407,7 +1521,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 	end
 	if (old_doe_dsc && !doe_dsc) begin
 		butch_reg[0][12] <= 1'b0;
-		butch_reg[0][13] <= ((ds_resp[0][13:8] == 6'h20) || (ds_resp[0][15:8] == 6'h04)) ? 1'b1 : 1'b0; // gettoc==0x20 or 0x60
+//		butch_reg[0][13] <= ((ds_resp[0][13:8] == 6'h20) || (ds_resp[0][15:8] == 6'h04)) ? 1'b1 : 1'b0; // gettoc==0x20 or 0x60
+		butch_reg[0][13] <= ((ds_resp_size == 3'h0) || (ds_resp_size == 3'h1)) ? 1'b0 : 1'b1; // gettoc==0x20 or 0x60
 	end	
 	if (old_doe_sub && !doe_sub) begin
 		subidx <= subidx + 4'h1;
@@ -1491,7 +1606,7 @@ spram #(.addr_width(7), .data_width(24)) cuep_bram_inst
 
 	.q       ( cuep_dout )
 );
-//mmssff start
+//mmssff pregap
 
 wire [6:0] cuel_add;
 wire [23:0] cuel_din;

@@ -61,5 +61,16 @@ In summary: still a fair bit of work to be done. lol
 
 ElectronAsh.
 
+Remaining tasks (No guarantees to complete)
+- Data streaming through MiSTer Main
+- Memory Track not working (probably commercial BIOS does not support Romulator/Alpine - need to switch to AMD or Atmel)
+- Weird timing display in VLM. Drops digits
+- CD-G support
+- Fix games that only work if other game started first
+- DSP sometimes does not come up correctly even after reboot
+- Single RAM improvement? Not sure if further improvement possible
+- Re-add turbo support? Not sure if possible with nuked 68k
+- Clean-up?
+
 In summary: Getting close. lol
 (updates GreyRogue)
