@@ -97,6 +97,7 @@ output overflow,
 output underflow,
 output errflow,
 output unhandled,
+input cd_valid,
 	
 	input               turbo,
 	input               vintbugfix,	
@@ -1126,6 +1127,7 @@ _butch butch_inst
 	.underflowo (underflow),
 	.errflowo (errflow),
 	.unhandledo (unhandled),
+	.cd_valid(cd_valid),
 	.sys_clk         (sys_clk)
 );
 wire b_xsck_oe;

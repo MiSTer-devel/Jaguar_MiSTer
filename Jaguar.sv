@@ -661,6 +661,7 @@ jaguar jaguar_inst
 .underflow (underflow),
 .errflow (errflow),
 .unhandled (unhandled),
+.cd_valid(cd_valid),
 	.ntsc( ~status[4] ) ,
 
 	.ps2_mouse( ps2_mouse ) ,
@@ -974,6 +975,7 @@ reg old_cd_media_change;
 reg old_msf;
 reg djv2;
 reg djv3;
+wire cd_valid = (audbus_out0[29:9] == imgbus_out[29:9]) && !((audbus_out[8:1] >= sd_buff_addr[7:0]) && (cd_hps_lba[20:0] == audbus_out0[29:9]));
 
 always @(posedge clk_sys) begin
 	reg old_load, old_ack, sload_wait;
@@ -1067,16 +1069,21 @@ always @(posedge clk_sys) begin
 			cd_ce <= 1;
 			if (cd_cnt == 3'h7) begin
 				cd_state <= 4'hD;
+				//cd_cnt <= 3'h0; // handled by cnt+1
+				cd_bus_add = 30'h0; // intentionally not <=
+			end
+		end else if (cd_state == 4'hD) begin // get sessions
+			if (cd_cnt[0] == 1'b0) begin
 				cd_bus_size = 1;               // intentionally not <=
 				cd_bus_header = djv2 || djv3;  // intentionally not <=
 				cd_bus_add = cd_header[29:0];  // intentionally not <=
 				//cd_bus_out[29:0] <= cd_size[29:0] - cd_header[29:0]; // get sessions (start of header - assuming v3.5)
+			end else begin
+				cd_sessions <= cd_data;
+				cd_state <= 4'hC;
+				cd_bus_add = 30'h2; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h2; // get tracks
 			end
-		end else if (cd_state == 4'hD) begin // get sessions
-			cd_sessions <= cd_data;
-			cd_state <= 4'hC;
-			cd_bus_add = 30'h2; // intentionally not <=
-			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h2; // get tracks
 			cd_ce <= 1;
 			cd_session0 <= 1;
 			cd_track <= 8'h1;
@@ -1209,7 +1216,7 @@ always @(posedge clk_sys) begin
 			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1C; // get filenamelength +28 (assuming no extra)
 			cd_ce <= 1;
 			if (cd_track == cd_tracks) begin
-				if (cd_session0) begin
+				if (cd_session0 && (cd_sessions[7:1] != 7'h0)) begin
 					cd_session0 <= 0;
 					cd_state <= 4'hC;
 					cd_bus_add = djv2 ? 30'hC : 30'hD; // intentionally not <=

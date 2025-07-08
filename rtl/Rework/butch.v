@@ -46,6 +46,7 @@ output overflowo,
 output underflowo,
 output errflowo,
 output unhandledo,
+input cd_valid,
 	input sys_clk
 );
 
@@ -711,7 +712,7 @@ begin
 	cuep_wrr <= 0;
 	cuel_wrr <= 0;
 	cuet_wrr <= 0;
-	if (resetstate[7] != 1'b0) begin
+	if ((resetstate[7] != 1'b0) && resetl) begin // should be enough time to set these before BIOS asks for them
 		resetstate <= resetstate - 8'h1;
 		cues_addr <= {1'h0,resetstate[6:1]};
 		cuet_addr <= {1'h0,resetstate[6:1]};
@@ -940,7 +941,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 								fifo[0] <= 64'h0;
 								aud_add[29:0] <= 30'h0;
 								cuet_addr <= track_idx + 7'h1;
-					end else if (aud_in != aud_cmp) begin
+//					end else if (aud_in != aud_cmp) begin
+					end else if (!cd_valid) begin
 						underflow <= 1'b1;
 							end
 							if ({cur_samples[9:1],1'b0} == 10'd586) begin
@@ -949,7 +951,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 							end
 						end else begin
 							aud_add <= aud_add + 4'h8;
-					if (aud_in != aud_cmp) begin
+//					if (aud_in != aud_cmp) begin
+					if (!cd_valid) begin
 						underflow <= 1'b1;
 					end
 						end
@@ -1406,10 +1409,10 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (din[15:8]==8'h30) begin  // Get Disc identifiers - not implemented
 				unhandled <= 1'b1;
 				ds_resp[0] <= 32'h3000; //| disc_identifier[0][7:0]; 
-				ds_resp[0] <= 32'h3100; //| disc_identifier[1][7:0]; 
-				ds_resp[0] <= 32'h3200; //| disc_identifier[2][7:0]; 
-				ds_resp[0] <= 32'h3300; //| disc_identifier[3][7:0]; 
-				ds_resp[0] <= 32'h3400; //| disc_identifier[4][7:0]; 
+				ds_resp[1] <= 32'h3100; //| disc_identifier[1][7:0]; 
+				ds_resp[2] <= 32'h3200; //| disc_identifier[2][7:0]; 
+				ds_resp[3] <= 32'h3300; //| disc_identifier[3][7:0]; 
+				ds_resp[4] <= 32'h3400; //| disc_identifier[4][7:0]; 
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
 				ds_resp_idx <= 3'h0;
