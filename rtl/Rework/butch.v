@@ -1660,7 +1660,7 @@ wire sckout;
 wire wsout;
 wire i2int;
 wire i2sen;
-assign i2srxd = i2txd;
+assign i2srxd = i2txd && i2s_jerry;
 assign sck = sckout && i2s_jerry;
 assign ws = wsout && i2s_jerry;
 assign sen = i2sen && i2s_jerry;
