@@ -411,7 +411,9 @@ reg [5:0] subtrseconds; // 0-59
 reg [15:0] last_ds;
 reg [31:0] seek_delay;
 //wire [31:0] seek_delay_set = 31'h7000; // TODO: Improve
-wire [31:0] seek_delay_set = 31'h20000; // TODO: Improve
+//wire [31:0] seek_delay_set = 31'h20000; // TODO: Improve - Add OSD option for faster seek if slow seek is not needed (only some overlapped streaming?)
+//wire [31:0] seek_delay_set = 31'h1000000; // TODO: Improve - If this is too short, audio distortions will occur in Vid Grid
+wire [31:0] seek_delay_set = 31'h2000000; // TODO: Improve? (32M / 106MHz ~= .3s)
 
 reg overflow;
 reg underflow;

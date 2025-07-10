@@ -98,7 +98,7 @@ output underflow,
 output errflow,
 output unhandled,
 input cd_valid,
-	
+output aud_16_eq,	
 	input               turbo,
 	input               vintbugfix,	
 	
@@ -1068,6 +1068,7 @@ _j_jerry jerry_inst
 	.snd_r           (snd_r),
 	.snd_clk         (audio_clk),
 	.dspwd           (dspwd),
+	.snd_eq          (aud_16_eq),
 	.sys_clk         (sys_clk)
 );
 

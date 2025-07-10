@@ -371,7 +371,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~bk_ena}),
+	.status_menumask({aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~bk_ena}),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -947,8 +947,6 @@ reg [7:0] cd_sessions;
 reg cd_session0;
 reg [7:0] cd_tracks;
 reg [7:0] cd_track;
-//wire [63:0] cdram_dout_swap = {cdram_dout[47:32],cdram_dout[63:48],cdram_dout[15:0],cdram_dout[31:16]};
-//wire [7:0] cd_data = cdram_dout_swap[8*cd_bus_out[2:0] +:8];
 wire [7:0] cd_data = cdram_dout[8*(7-cd_bus_out[2:0]) +:8];
 reg [23:0] cd_pregap;
 reg [29:4] cd_pregap_pos;
@@ -1307,6 +1305,7 @@ wire [1:0] cart_oe;
 //
 //assign cart_q1 = (!abus_out[2]) ? DDRAM_DOUT[63:32] : DDRAM_DOUT[31:00];
 assign cart_q1 = ((!status[57] && !cd_img_mounted) || (&status[58:57])) ? {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]} : {cdram_dout[31:00],cdram_dout[63:32]};
+//assign cart_q1 = (!(|imgbus_out[29:24])) ? {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]} : {cdram_dout[31:00],cdram_dout[63:32]};
 wire [63:0] cart_cmp = {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]};
 
 wire [3:0] dram_oe = (~dram_cas_n) ? ~dram_oe_n[3:0] : 4'b0000;

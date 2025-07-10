@@ -75,10 +75,12 @@ module _j_jerry
 	output snd_clk,
 	
 	output [15:0] dspwd,
+
+	output snd_eq,
 	
 	input sys_clk // Generated
 );
-
+assign snd_eq = snd_l == snd_r;
 wire [15:0] dsprd_out;
 wire dsprd_oe;
 wire [15:0] dr_out;
