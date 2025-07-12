@@ -249,7 +249,7 @@ localparam CONF_STR = {
 	"FC2,ROM,Load Bios;",
 	"F3,JAGJ64ROMBIN,Load CD Bios;",
 	"F7,BIN,Load CUE Bin;",
-   "S1,CDI,Load CD;",
+	"S1,CDI,Load CD;",
 	"F8,BINCDI,Load Bin;",
 	"OOR,Bin Offset 0x3,0,1,2,3,4,5,6,7,8,9,A,B,C,D,E,F;",
 	"OV,Quick CD,No,Yes;",
@@ -442,6 +442,7 @@ wire [8:0] cd_toc_addr = {cd_track[5:0],cd_toc_type[2:0]};
 reg [2:0] cd_toc_type;
 reg [15:0] cd_toc_data;
 reg cd_toc_wr;
+reg [22:20] cart_mask;
 
 always @(posedge clk_sys)
 if (reset) begin
@@ -467,6 +468,18 @@ else begin
 //		status_reg <= 0;
 //		ioctl_wait <= 0;
 //		timeout <= 3000000;
+	end
+	if (old_download && ~ioctl_download && cart_index) begin
+		cart_mask[22:20] = 3'h7; //not exact=don't modify
+		if (loader_addr[19:0]==20'h0) begin
+			if (loader_addr[24:20]==5'h1) begin
+				cart_mask[22:20] = 3'h0; // 1MB
+			end else if (loader_addr[24:20]==5'h2) begin
+				cart_mask[22:20] = 3'h1; // 2MB
+			end else if (loader_addr[24:20]==5'h4) begin
+				cart_mask[22:20] = 3'h3; // 4MB
+			end
+		end
 	end
 
 	if (loader_wr) loader_addr <= loader_addr + 2'd2; // Writing a 16-bit WORD at a time!
@@ -1238,6 +1251,11 @@ always @(posedge clk_sys) begin
 		cd_img_mounted <= 0;
 	end
 
+	// This logic ping pongs between 2 buffers.
+	// On asking for an uncached address it asks for the 512 byte lba that contains it and then the lba after.
+	// If a cached address is in the higher of the two blocks it asks for the next lba to replace the no longer needed lower lba.
+	// Typically this asks for the current and next lba on a new request and replaces the lower block when the first address of the higher is accessed.
+	// So it tries to stay in the 512-1024 bytes cached range. If the requested address leaves the next <=512 bytes cached it will ask for more.
 	old_load <= sload;
 	old_ack  <= cd_hps_ack;
 
@@ -1567,7 +1585,7 @@ sdram sdram
 	.ch1_ready          (ch1a_ready),
 	.ch1_64             (ch1_64),
 
-	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (cdos_index ? 23'h780000 : 23'h000000) : {1'b0,abus_out[22:2],memtrack_wr?abus_out[1]:1'b0} | (override ? 23'h780000 : 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h780000=24'hF00000
+	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (cdos_index ? 23'h780000 : 23'h000000) : {1'b0,abus_out[22:20] & cart_mask[22:20],abus_out[19:2],memtrack_wr?abus_out[1]:1'b0} | (override ? 23'h780000 : 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h780000=24'hF00000
 	.ch2_dout           (cart_qsc),            // data output to cpu
 	.ch2_din            ((loader_en) ? loader_data_bs : dram_d[15:0]),     // data input from cpu
 	.ch2_req            ((loader_en) ? loader_wr & (cart_index || cdos_index) : cart_rd_trig | cart_wr_trig),     // request

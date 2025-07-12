@@ -68,7 +68,6 @@ Remaining tasks (No guarantees to complete)
 - Memory Track not working (probably commercial BIOS does not support Romulator/Alpine - need to switch to AMD or Atmel)
 - Weird timing display in VLM. Drops digits
 - CD-G support
-- Fix games that only work if other game started first
 - DSP sometimes does not come up correctly even after reboot
 - Quality of life improvements like boot rom loading of CD BIOS (and memory track ROM)
 - Other CD formats beside cdi (cue/bin, chd - not sure if this is possible as it requires multi-session)
