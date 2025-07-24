@@ -288,6 +288,8 @@ localparam CONF_STR = {
 	"oM,Disable DSP,No,Yes;",
 	"OE,VSync,vvs,hvs(debug);",
 	"OS,Tap Clock,1,4;",
+	"o02,FastRAM1,0,1,2,3,4,5,6,7;",
+	"o35,FastRAM2,7,6,5,4,3,2,1,0;",
 	"-;",
 	"R0,Reset;",
 	"J1,A,B,C,Option,Pause,1,2,3,4,5,6,7,8,9,0,Star,Hash;",
@@ -546,9 +548,11 @@ wire ch1_ready;
 `ifdef MISTER_DUAL_SDRAM
 wire ch1_64 = status[16];
 wire hide_64 = 0;
+//`define FAST_SDRAM
 `else
 wire ch1_64 = 1;
 wire hide_64 = 1;
+`define FAST_SDRAM
 `endif
 // From SDRAM to the core.
 wire [63:0] dram_q = ch1_64 ? use_fastram ? {fastram[63:32], ch1_dout[31:0]} : ch1_dout[63:0] : {ch1_dout2[63:32], ch1_dout[31:0]};
@@ -1452,7 +1456,7 @@ reg [7:0] cas_latch;
 wire [17:0] sdram_addr;
 assign sdram_addr[17:8] = ras_latch[9:0];
 assign sdram_addr[7:0] = cas_latch[7:0];
-wire use_fastram = (sdram_addr[17:15] == 3'h0) || (sdram_addr[17:15] == 3'h7); // 256K = 1/4 of address coverage
+wire use_fastram = (sdram_addr[17:15] == {status[34:32]}) || (sdram_addr[17:15] == ~{status[37:35]}); // 256K = 1/4 of address coverage
 wire [63:32] fastram;
 reg fastram_w;
 reg old_ch1_reqw;
