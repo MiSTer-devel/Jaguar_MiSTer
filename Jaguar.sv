@@ -239,7 +239,7 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X XXXXXXXXXXXXXXXXXXXXX XXXXXXXX                     XXXXX     XX
+// X XXXXXXXXXXXXXXX XXXXX XXXXXXXX XX                  XXXXX     XX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -276,7 +276,7 @@ localparam CONF_STR = {
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
 	"RM,P1+P2 Pause;",
-	"OH,Team Tap,Disabled,Enabled;",
+	"o01,Team Tap,Disabled,JoyPort1,JoyPort2;",
 	"-;",
 	"-Options may crash;",
 	"RF,Reset RAM(debug);",
@@ -619,7 +619,8 @@ jaguar jaguar_inst
 	.spinner_0(spinner_0),
 	.spinner_1(spinner_1),
 	.spinner_speed(status[21:20]),
-	.team_tap_port2( status[17] ),
+	.team_tap_port1( status[33:32]==1 ),
+	.team_tap_port2( status[33:32]==2 ),
 
 	.startcas( startcas ) ,
 
