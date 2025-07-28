@@ -239,7 +239,7 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X XXXXXXXXXXXXXXX XXXXX XXXXXXXX XX                  XXXXX     XX
+// X XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXX            XXXXXXX   XX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -249,6 +249,7 @@ localparam CONF_STR = {
 	"FC2,ROM,Load Bios;",
 	"F3,JAGJ64ROMBIN,Load CD Bios;",
 	"F7,BIN,Load CUE Bin;",
+	"S1,CDI,Load CD;",
 	"F8,BINCDI,Load Bin;",
 	"OOR,Bin Offset 0x3,0,1,2,3,4,5,6,7,8,9,A,B,C,D,E,F;",
 	"OV,Quick CD,No,Yes;",
@@ -257,12 +258,13 @@ localparam CONF_STR = {
 	"oK,CD Enabled,No,Yes;",
 	"oL,CD Inserted,No,Yes;",
 	"oO,Memory Track,No,Yes;",
+	"oPQ,CDI Source,Auto,Stream,Auto,DDRAM;",
 	"-;",
 	"OU,Max Compatibility,No,Yes;",
 	"O2,Cart Checksum Patch,Off,On;",
 	"OT,Auto EEPROM,No,Yes;",
 	"O3,CPU Speed,Normal,Turbo;",
-	"OJ,Vint Fix,Yes,No;",
+	"ON,Vint Fix,Yes,No;",
 	"-;",
 	"C,Cheats;",
 	"H1O[23],Cheats Enabled,Yes,No;",
@@ -274,7 +276,7 @@ localparam CONF_STR = {
 	"O4,Region Setting,NTSC,PAL;",
 	"O78,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O9A,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-	"OI,Crop,No,Yes;",
+	"OIJ,Crop,None,Small,Primal;",
 	"-;",
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
@@ -289,6 +291,8 @@ localparam CONF_STR = {
 	"oM,Disable DSP,No,Yes;",
 	"OE,VSync,vvs,hvs(debug);",
 	"OS,Tap Clock,1,4;",
+	"o24,FastRAM1,0,1,2,3,4,5,6,7;",
+	"o57,FastRAM2,7,6,5,4,3,2,1,0;",
 	"-;",
 	"R0,Reset;",
 	"J1,A,B,C,Option,Pause,1,2,3,4,5,6,7,8,9,0,Star,Hash;",
@@ -333,11 +337,28 @@ wire [15:0] analog_1;
 wire [8:0]  spinner_0;
 wire [8:0]  spinner_1;
 
+reg [31:0]  cd_hps_lba;
+reg         cd_hps_req;
+wire        cd_hps_ack;
+wire        cd_media_change;
+reg         cd_img_mounted;
+
+wire        nvram_hps_ack;
+bit         nvram_hps_wr;
+bit         nvram_hps_rd;
+bit  [15:0] nvram_hps_din;
+wire        nvram_media_change;
+
+// Flag which becomes active for some time when an NvRAM image is mounted
+wire        nvram_img_mount = nvram_media_change && img_size != 0;
+// Flag which becomes active for some time when an NvRAM image is mounted
+wire        cd_img_mount = cd_media_change && img_size != 0;
+
 wire ram64;
 wire tapclock = status[28] ? xvclk_o: clk_sys;
 wire xvclk_o;
 
-hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -361,7 +382,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~gg_available,~bk_ena}),
+	.status_menumask({aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~gg_available,~bk_ena}),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -370,15 +391,16 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1)) hps_io
 	.ioctl_dout(ioctl_data),
 	.ioctl_wait(ioctl_wait),
 
-	.sd_lba('{sd_lba}),
-	.sd_rd(sd_rd),
-	.sd_wr(sd_wr),
-	.sd_ack(sd_ack),
+	.sd_lba('{sd_lba, cd_hps_lba}),
+	.sd_blk_cnt('{0, 0}),
+	.sd_rd({cd_hps_req && cd_img_mounted, sd_rd}),
+	.sd_wr({1'b0, sd_wr}),
+	.sd_ack({cd_hps_ack, sd_ack}),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din('{sd_buff_din}),
+	.sd_buff_din('{sd_buff_din, 0}),
 	.sd_buff_wr(sd_buff_wr),
-	.img_mounted(img_mounted),
+	.img_mounted({cd_media_change, img_mounted}),
 	.img_readonly(img_readonly),
 	.img_size(img_size),
 
@@ -425,9 +447,14 @@ wire cd_wrack = !cd_wait;	// TESTING!!
 reg cd_wait;
 wire cd_index = ioctl_index[3] == 1'b1; // 8-15
 //wire cd_download = ioctl_download && cd_index;
-wire [8:0] toc_addr = loader_addr[9:1];
-wire [15:0] toc_data = loader_data_bs;
-wire toc_wr = cue_download && loader_wr;
+wire [8:0] toc_addr = cd_init ? loader_addr[9:1] : cd_toc_addr;
+wire [15:0] toc_data = cd_init ? loader_data_bs : cd_toc_data;
+wire toc_wr = cd_init ? cue_download && loader_wr : cd_toc_wr;
+wire [8:0] cd_toc_addr = {cd_track[5:0],cd_toc_type[2:0]};
+reg [2:0] cd_toc_type;
+reg [15:0] cd_toc_data;
+reg cd_toc_wr;
+reg [22:20] cart_mask;
 
 always @(posedge clk_sys)
 if (reset) begin
@@ -453,6 +480,18 @@ else begin
 //		status_reg <= 0;
 //		ioctl_wait <= 0;
 //		timeout <= 3000000;
+	end
+	if (old_download && ~ioctl_download && cart_index) begin
+		cart_mask[22:20] = 3'h7; //not exact=don't modify
+		if (loader_addr[19:0]==20'h0) begin
+			if (loader_addr[24:20]==5'h1) begin
+				cart_mask[22:20] = 3'h0; // 1MB
+			end else if (loader_addr[24:20]==5'h2) begin
+				cart_mask[22:20] = 3'h1; // 2MB
+			end else if (loader_addr[24:20]==5'h4) begin
+				cart_mask[22:20] = 3'h3; // 4MB
+			end
+		end
 	end
 
 	if (loader_wr) loader_addr <= loader_addr + 2'd2; // Writing a 16-bit WORD at a time!
@@ -507,7 +546,7 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | status[15];
 
-wire xresetl = !(reset | os_download | cart_download | cue_download);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
+wire xresetl = !(reset | os_download | cart_download | cue_download | !cd_init);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
 wire [9:0] dram_a;
 wire dram_ras_n;
 wire dram_cas_n;
@@ -519,15 +558,17 @@ wire ch1_ready;
 `ifdef MISTER_DUAL_SDRAM
 wire ch1_64 = status[16];
 wire hide_64 = 0;
+//`define FAST_SDRAM
 `else
 wire ch1_64 = 1;
 wire hide_64 = 1;
+`define FAST_SDRAM
 `endif
 // From SDRAM to the core.
 wire [63:0] dram_q = ch1_64 ? use_fastram ? {fastram[63:32], ch1_dout[31:0]} : ch1_dout[63:0] : {ch1_dout2[63:32], ch1_dout[31:0]};
 
 wire [23:0] abus_out;
-wire [28:0] audbus_out;
+wire [29:0] audbus_out;
 wire [7:0] os_rom_q;
 
 wire hblank;
@@ -633,7 +674,7 @@ jaguar jaguar_inst
 	.startcas( startcas ) ,
 
 	.turbo( 0),//status[3] ) ,
-	.vintbugfix( ~status[19] | status[30] ),
+	.vintbugfix( ~status[23] | status[30] ),
 	.cd_en( status[52] | status[31] ),
 	.cd_ex( status[53] | status[31] ),
 	.b_override(override),
@@ -645,8 +686,10 @@ jaguar jaguar_inst
 	.toc_wr(toc_wr),
 	.audbus_out( audbus_out ) ,
 	.aud_in( cart_q1 ) ,
+	.aud_cmp( cart_cmp ) ,
 	.audwaitl( xwaitl ) ,
 	.aud_ce(aud_ce),
+	.aud_busy(audbus_busy),
 .aud_sess(status[55] ^ status[31]),
 .dohacks(status[2] | status[31]),
 .xvclk_o(xvclk_o),
@@ -654,6 +697,7 @@ jaguar jaguar_inst
 .underflow (underflow),
 .errflow (errflow),
 .unhandled (unhandled),
+.cd_valid(cd_valid),
 	.ntsc( ~status[4] ) ,
 
 	.ps2_mouse( ps2_mouse ) ,
@@ -787,10 +831,13 @@ end else begin
    if (hblank) begin
 		hcount <= 0;
 	end
-   if (status[18] && (hcount == ((14'd1394)<<2))) begin //works well for NBA Jam and Flip Out
+   if (hcount == ((status[18] ? 14'd1394 : 14'd1365)<<2)) begin // 1394 works well for NBA Jam and Flip Out; 1365 for Primal Rage
 		crop <= 1;
 	end
-   if (~status[18] || (hcount == ((14'd45)<<2))) begin
+   if (hcount == ((status[18] ? 14'd45 : 14'd84)<<2)) begin  // 45 works well for NBA Jam and Flip Out; 84 for Primal Rage
+		crop <= 0;
+	end
+   if (status[19:18]==2'b00) begin
 		crop <= 0;
 	end
 end
@@ -841,7 +888,7 @@ reg mismatch;
 reg [7:0] be_save;
 
 reg [23:0] old_abus_out;
-reg [28:0] old_audbus_out;
+reg [29:0] old_audbus_out;
 reg old_aud_ce;
 wire overflow;
 wire underflow;
@@ -850,35 +897,464 @@ wire unhandled;
 
 wire cart_rd_trigp = !cart_ce_n && (cart_ce_n_falling || (abus_out != old_abus_out));
 wire aud_rd_trig = aud_ce && ((audbus_out != old_audbus_out) || (!old_aud_ce));
+wire cd_rd_trig = cd_ce && ((cd_bus_out != old_audbus_out) || (!old_aud_ce));
+wire img_rd_trig = cd_init ? aud_rd_trig : cd_rd_trig;
+wire img_ce = cd_init ? aud_ce : cd_ce;
 reg xwaitl_latch;
 assign xwaitl = DDRAM_DOUT_READY | xwaitl_latch;
 always @(posedge clk_sys)
 if (reset) begin
 	xwaitl_latch <= 1'b1; // De-assert on reset!
 	old_abus_out <= 24'h112233;
-	old_audbus_out <= 29'h112233;
+	old_audbus_out <= 30'h112233;
 	old_aud_ce <= 1'b1;
 end else begin
 	cart_ce_n_1 <= cart_ce_n;
 	old_abus_out <= abus_out;
-	old_audbus_out <= audbus_out;
-	old_aud_ce <= aud_ce;
+	old_audbus_out <= cd_init ? audbus_out : cd_bus_out;
+	old_aud_ce <= cd_init ? aud_ce : cd_ce;
 //	cart_diff <= cart_q1 != cart_q;
+//	cart_diff <= xwaitl &&  && (cdram_dout != DDRAM_DOUT);
 
 
-	if (aud_rd_trig) begin
+	if (img_rd_trig) begin
 		xwaitl_latch <= 1'b0; // Assert this (low) until the Cart data is ready.
 	end else if (DDRAM_DOUT_READY)
 		xwaitl_latch <= 1'b1; // De-assert, to let the core know.
 end
 
+dpram #(7,16) cdram_inst0
+(
+	.clock(clk_sys),
+   .address_a(imgbus_out[9:3]),
+	.q_a({cdram_dout[55:48],cdram_dout[63:56]}),
+
+	.address_b({cd_hps_lba[0],sd_buff_addr[7:2]}),
+	.data_b(sd_buff_dout),
+	.wren_b(bk_int & sd_buff_wr & cd_hps_ack & sd_buff_addr[1:0]==2'b00)
+);
+
+dpram #(7,16) cdram_inst1
+(
+	.clock(clk_sys),
+   .address_a(imgbus_out[9:3]),
+	.q_a({cdram_dout[39:32],cdram_dout[47:40]}),
+
+	.address_b({cd_hps_lba[0],sd_buff_addr[7:2]}),
+	.data_b(sd_buff_dout),
+	.wren_b(bk_int & sd_buff_wr & cd_hps_ack & sd_buff_addr[1:0]==2'b01)
+);
+
+dpram #(7,16) cdram_inst2
+(
+	.clock(clk_sys),
+   .address_a(imgbus_out[9:3]),
+	.q_a({cdram_dout[23:16],cdram_dout[31:24]}),
+
+	.address_b({cd_hps_lba[0],sd_buff_addr[7:2]}),
+	.data_b(sd_buff_dout),
+	.wren_b(bk_int & sd_buff_wr & cd_hps_ack & sd_buff_addr[1:0]==2'b10)
+);
+
+dpram #(7,16) cdram_inst3
+(
+	.clock(clk_sys),
+   .address_a(imgbus_out[9:3]),
+	.q_a({cdram_dout[7:0],cdram_dout[15:8]}),
+
+	.address_b({cd_hps_lba[0],sd_buff_addr[7:2]}),
+	.data_b(sd_buff_dout),
+	.wren_b(bk_int & sd_buff_wr & cd_hps_ack & sd_buff_addr[1:0]==2'b11)
+);
+
+wire [63:0] cdram_dout;
+reg [29:9] audbus_out0;
+wire audbus_busy = img_ce || img_rd_trig || sload || load_state;
+reg sload;
+reg load_state;
+reg [31:0] load_cnt;
+reg [31:0] max_load_cnt;
+wire lcnt = max_load_cnt == load_cnt;
+reg [31:0] cload_cnt;
+reg [31:0] max_cload_cnt;
+wire clcnt = max_cload_cnt == cload_cnt;
+wire cd_init = (cd_state == 0);
+reg [3:0] cd_state;
+reg [29:0] cd_size;
+reg [29:0] cd_bus_out;
+reg cd_ce;
+wire [29:0] imgbus_out = cd_init ? audbus_out : cd_bus_out;
+reg [2:0] cd_cnt;
+reg [31:0] cd_header;
+reg [7:0] cd_sessions;
+reg cd_session0;
+reg [7:0] cd_tracks;
+reg [7:0] cd_track;
+wire [7:0] cd_data = cdram_dout[8*(7-cd_bus_out[2:0]) +:8];
+reg [23:0] cd_pregap;
+reg [29:4] cd_pregap_pos;
+reg [31:0] cd_length;
+reg [31:0] cd_startlba;
+reg [31:0] cd_totlength;
+reg [31:0] cd_start;
+reg [19:0] cd_add1; // max lba fits in 19bits
+reg [29:8] cd_add2;
+reg [23:4] cd_add3;
+reg [23:0] cd_tomsf;
+reg do_tomsf;
+reg [6:0] cd_min;
+reg [5:0] cd_sec;
+wire [6:0] cd_frame = cd_tomsf[6:0];
+wire [23:0] cd_msf = {1'b0, cd_min, 2'b0, cd_sec, 1'b0, cd_frame};
+wire [23:0] min_to_frames = 24'd4500; // 60*75
+wire [23:0] sec_to_frames = 24'd75; // 75
+reg [7:0] cd_tmp;
+reg [29:0] cd_bus_add;
+reg cd_bus_size;
+reg cd_bus_header;
+reg old_cd_media_change;
+reg old_msf;
+reg djv2;
+reg djv3;
+wire cd_valid = (audbus_out0[29:9] == imgbus_out[29:9]) && !((audbus_out[8:1] >= sd_buff_addr[7:0]) && (cd_hps_lba[20:0] == audbus_out0[29:9]));
+
+always @(posedge clk_sys) begin
+	reg old_load, old_ack, sload_wait;
+	if (reset) begin
+		sload <= 1'b0;
+		load_state <= 1'b0;
+		sload_wait <= 1'b0;
+		cd_hps_req <= 0;
+		audbus_out0[29:9] <= 23'h7ffffe;
+		cd_hps_lba[31:0] <= 32'hfffffffe;
+		load_cnt[31:0] <= 32'h0;
+		max_load_cnt[31:0] <= 32'h0;
+		cload_cnt[31:0] <= 32'h0;
+		max_cload_cnt[31:0] <= 32'h0;
+		cd_state <= 4'h0;
+		cd_size[29:0] <= 30'h0;
+		cd_toc_type[2:0] <= 3'h0;
+		cd_toc_data[15:0] <= 16'h0;
+		cd_toc_wr <= 0;
+	end
+
+	old_cd_media_change <= cd_media_change;
+	if (cd_media_change && !old_cd_media_change) begin
+		cd_img_mounted <= 1;
+		cd_state <= 4'hF;
+		cd_size[29:0] <= img_size[29:0];
+	end
+	cd_ce <= 0;
+	cd_toc_wr <= 0;
+	old_msf <= do_tomsf;
+	if (do_tomsf) begin
+		if (!old_msf) begin
+			cd_min <= 'h0;
+			cd_sec <= 'h0;
+		end else if (cd_tomsf >= min_to_frames) begin
+			cd_tomsf <= cd_tomsf - min_to_frames;
+			cd_min <= cd_min + 1;
+		end else if (cd_tomsf >= sec_to_frames) begin
+			cd_tomsf <= cd_tomsf - sec_to_frames;
+			cd_sec <= cd_sec + 1;
+		end else begin
+			do_tomsf <= 0;
+		end
+	end
+	if (!audbus_busy && !do_tomsf) begin
+		cd_cnt <= cd_cnt + 3'h1;
+		cd_bus_header = 0;  // intentionally not <=
+		cd_bus_size = 0;    // intentionally not <=
+		cd_bus_add = 30'h0; // intentionally not <=
+		if (cd_state == 4'hF) begin // cache (header size - 1)
+			if (|cd_size[29:10]) begin// must be at least one buffer + header
+				cd_bus_size = 1;     // intentionally not <=
+				cd_bus_add = 30'h8; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_size[29:0] - 30'h8; // get file type version and header size
+				cd_ce <= 1;
+				cd_cnt <= 3'h0;
+				cd_state <= 4'hE;
+			end else begin
+				cd_state <= 4'h0; // too small
+			end
+		end else if (cd_state == 4'hE) begin // get file type version
+			if (cd_cnt == 3'h0) begin
+				if (cd_data == 8'h6) begin // 80000006=v3.5,80000005=v3,80000004=v2
+					djv2 <= 1'b0;
+					djv3 <= 1'b0;
+				end else if (cd_data == 8'h5) begin // 80000006=v3.5,80000005=v3,80000004=v2
+					djv2 <= 1'b0;
+					djv3 <= 1'b1;
+				end else if (cd_data == 8'h4) begin // 80000006=v3.5,80000005=v3,80000004=v2
+					djv2 <= 1'b1;
+					djv3 <= 1'b0;
+				end else begin // 80000006=v3.5,80000005=v3,80000004=v2
+					cd_state <= 4'h0; // unsupported
+				end
+			end
+			if ((cd_cnt == 3'h1) || (cd_cnt == 3'h2)) begin
+				if (cd_data != 8'h0) begin // 80000006=v3.5,80000005=v3,80000004=v2
+					cd_state <= 4'h0; // unsupported
+				end
+			end
+			if (cd_cnt == 3'h3) begin
+				if (cd_data != 8'h80) begin // 80000006=v3.5,80000005=v3,80000004=v2
+					cd_state <= 4'h0; // unsupported
+				end
+			end
+			if (cd_cnt[2] == 1'b1) begin
+				cd_header[8*cd_cnt[1:0] +:8] <= cd_data;
+			end
+			cd_bus_add = 30'h1; // intentionally not <=
+			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1;
+			cd_ce <= 1;
+			if (cd_cnt == 3'h7) begin
+				cd_state <= 4'hD;
+				//cd_cnt <= 3'h0; // handled by cnt+1
+				cd_bus_add = 30'h0; // intentionally not <=
+			end
+		end else if (cd_state == 4'hD) begin // get sessions
+			if (cd_cnt[0] == 1'b0) begin
+				cd_bus_size = 1;               // intentionally not <=
+				cd_bus_header = djv2 || djv3;  // intentionally not <=
+				cd_bus_add = cd_header[29:0];  // intentionally not <=
+				//cd_bus_out[29:0] <= cd_size[29:0] - cd_header[29:0]; // get sessions (start of header - assuming v3.5)
+			end else begin
+				cd_sessions <= cd_data;
+				cd_state <= 4'hC;
+				cd_bus_add = 30'h2; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h2; // get tracks
+			end
+			cd_ce <= 1;
+			cd_session0 <= 1;
+			cd_track <= 8'h1;
+			cd_tracks <= 8'h0;
+			cd_add1 <= 'h0;
+		end else if (cd_state == 4'hC) begin // get tracks
+			cd_tracks <= cd_tracks + cd_data;
+			cd_state <= 4'hB;
+			cd_bus_add = 30'h1E; // intentionally not <=
+			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1E; // get filenamelength 2+28 (assuming no 8 length extra info)
+			cd_ce <= 1;
+			cd_cnt <= 3'h0;
+		end else if (cd_state == 4'hB) begin // get filenamelength
+			if (cd_cnt[0] == 1'b0) begin
+				cd_bus_add = cd_data; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + cd_data; // get pregap +1+11+4+4+4+8+2 (assuming 8 DJ4)
+			end else begin
+				cd_bus_add = djv2 ? 30'h1A : 30'h22; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h22; // get pregap +1+11+4+4+4+8+2 (assuming 8 DJ4)
+				cd_state <= 4'hA;
+				cd_ce <= 1;
+				cd_cnt <= 3'h0;
+			end
+		end else if (cd_state == 4'hA) begin // get pregap and length
+			cd_bus_add = 30'h1; // intentionally not <=
+			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1;
+			cd_ce <= 1;
+			if (cd_cnt[2] == 1'b0) begin
+				cd_pregap[8*cd_cnt[1:0] +:8] <= cd_data;
+			end else begin
+				cd_length[8*cd_cnt[1:0] +:8] <= cd_data;
+			end
+			if (cd_cnt == 3'h7) begin
+				cd_state <= 4'h9;
+				cd_cnt <= 3'h0;
+				cd_bus_add = 30'h17; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h17; // get startlba +1+6+4+12 (assuming mode is 0)
+			end
+		end else if (cd_state == 4'h9) begin // get startlba and totlength
+			cd_bus_add = 30'h1; // intentionally not <=
+			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1;
+			cd_ce <= 1;
+			if (cd_cnt[2] == 1'b0) begin
+				cd_startlba[8*cd_cnt[1:0] +:8] <= cd_data;
+			end else begin
+				cd_totlength[8*cd_cnt[1:0] +:8] <= cd_data;
+			end
+			if (cd_cnt == 3'h7) begin
+				cd_state <= 4'h8;
+				cd_cnt <= 3'h0;
+				cd_bus_add = djv2 ? 30'h32 : 30'h89; // intentionally not <=
+				//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h89; // get startlba +1+16+4+29+5+4+78 (assuming sectorsize is 2352 and extra)
+			end
+		end else if (cd_state == 4'h8) begin // write settings
+			cd_state <= 4'h7;
+			cd_start <= cd_startlba + cd_pregap;
+			cd_tomsf <= cd_startlba + cd_pregap;
+			do_tomsf <= 1;
+		end else if (cd_state == 4'h7) begin // write settings
+			cd_toc_type[2:0] <= 3'h0;
+			cd_toc_data[15:0] <= cd_msf[23:8];
+			cd_tmp[7:0] <= cd_msf[7:0];
+			cd_toc_wr <= 1;
+			cd_state <= 4'h6;
+			cd_tomsf <= cd_totlength;
+			do_tomsf <= 1;
+			cd_cnt <= 3'h0;
+		end else if (cd_state == 4'h6) begin // write settings
+			// *2352=<<11 + <<8 + <<5 + <<4
+			if (cd_cnt[1:0] == 2'b00) begin
+				cd_pregap_pos[29:4] <= {7'h0,cd_add1[18:0]};
+			end else	if (cd_cnt[1:0] == 2'b01) begin
+				cd_pregap_pos[29:5] <= cd_pregap_pos[29:5] + {6'h0,cd_add1[18:0]};
+			end else	if (cd_cnt[1:0] == 2'b10) begin
+				cd_pregap_pos[29:8] <= cd_pregap_pos[29:8] + {3'h0,cd_add1[18:0]};
+			end else	if (cd_cnt[1:0] == 2'b11) begin
+				cd_pregap_pos[29:11] <= cd_pregap_pos[29:11] + {cd_add1[18:0]};
+				cd_toc_type[2:0] <= 3'h1;
+				cd_toc_data[15:8] <= cd_tmp[7:0];
+				cd_toc_data[7:0] <= cd_msf[23:16];
+				cd_toc_wr <= 1;
+				cd_state <= 4'h5;
+			end
+		end else if (cd_state == 4'h5) begin // write settings
+			cd_toc_type[2:0] <= 3'h2;
+			cd_toc_data[15:0] <= cd_msf[15:0];
+			cd_toc_wr <= 1;
+			cd_state <= 4'h4;
+			cd_tomsf <= cd_pregap;
+			do_tomsf <= 1;
+			cd_add1[18:0] <= cd_add1[18:0] + cd_pregap[18:0];
+		end else if (cd_state == 4'h4) begin // write settings
+			cd_toc_type[2:0] <= 3'h3;
+//			cd_toc_data[15:0] <= 16'h0; // cd_msf[15:0]; // assumes pregap < 1 min
+			cd_toc_data[15:0] <= cd_msf[15:0]; // assumes pregap < 1 min
+			cd_toc_wr <= 1;
+			cd_state <= 4'h3;
+			cd_add1[18:0] <= cd_add1[18:0] + cd_length[18:0];
+			cd_cnt <= 3'h0;
+		end else if (cd_state == 4'h3) begin // write settings
+			if (cd_cnt[0] == 1'b0) begin
+				cd_toc_type[2:0] <= 3'h4;
+				cd_toc_data[15:8] <= cd_session0 ? 8'h1 : 8'h2;
+				cd_toc_data[7:0] <= {2'b00,cd_pregap_pos[29:24]};
+			end else begin
+				cd_toc_type[2:0] <= 3'h5;
+				cd_toc_data[15:0] <= {cd_pregap_pos[23:8]};
+				cd_state <= 4'h2;
+				cd_cnt <= 3'h0;
+			end
+			cd_toc_wr <= 1;
+			cd_tomsf <= cd_start + cd_length;
+			do_tomsf <= 1;
+		end else if (cd_state == 4'h2) begin // write settings
+			if (cd_cnt[0] == 1'b0) begin
+				cd_toc_type[2:0] <= 3'h6;
+				cd_toc_data[15:8] <= {cd_pregap_pos[7:4],4'h0};
+				cd_toc_data[7:0] <= {cd_msf[23:16]};
+			end else begin
+				cd_toc_type[2:0] <= 3'h7;
+				cd_toc_data[15:0] <= {cd_msf[15:0]};
+				cd_state <= 4'h1;
+			end
+			cd_toc_wr <= 1;
+		end else if (cd_state == 4'h1) begin // track done 
+			cd_state <= 4'hB;
+			cd_cnt <= 3'h0;
+			cd_track <= cd_track + 8'h1;
+			cd_bus_add = 30'h1C; // intentionally not <=
+			//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'h1C; // get filenamelength +28 (assuming no extra)
+			cd_ce <= 1;
+			if (cd_track == cd_tracks) begin
+				if (cd_session0 && (cd_sessions[7:1] != 7'h0)) begin
+					cd_session0 <= 0;
+					cd_state <= 4'hC;
+					cd_bus_add = djv2 ? 30'hC : 30'hD; // intentionally not <=
+					//cd_bus_out[29:0] <= cd_bus_out[29:0] + 30'hD; // get tracks +4+8+1 (assuming not v2)
+				end else begin
+					cd_state <= 4'h0; // done
+					cd_bus_add = 30'h0; // intentionally not <=
+					//cd_bus_out[29:0] <= cd_bus_out[29:0]; // get tracks +0
+				end
+			end
+		end
+		cd_bus_out[29:0] <= cd_bus_header ? cd_bus_add[29:0] : cd_bus_size ? (cd_size[29:0] - cd_bus_add[29:0]) : (cd_bus_out[29:0] + cd_bus_add[29:0]);
+	end
+//		3 lbatomsf(startlba+pregap)
+//		3 lbatomsf(length)
+//		2 0 (pregap)
+//		1 session (1 or 2)
+//		4 troffset = position + pregap*2352
+//		3 lbatomsf(sessend = startlba+pregap+length)
+	if (cd_index) begin
+		cd_img_mounted <= 0;
+	end
+
+	// This logic ping pongs between 2 buffers.
+	// On asking for an uncached address it asks for the 512 byte lba that contains it and then the lba after.
+	// If a cached address is in the higher of the two blocks it asks for the next lba to replace the no longer needed lower lba.
+	// Typically this asks for the current and next lba on a new request and replaces the lower block when the first address of the higher is accessed.
+	// So it tries to stay in the 512-1024 bytes cached range. If the requested address leaves the next <=512 bytes cached it will ask for more.
+	old_load <= sload;
+	old_ack  <= cd_hps_ack;
+
+	if(~old_ack & cd_hps_ack) {cd_hps_req} <= 0;
+
+	if(!load_state) begin
+		if(sload) begin
+			sload_wait <= 1'b1;
+			if(sload_wait) begin
+				sload <= 1'b0;
+				load_state <= 1;
+				cd_hps_req <= 1;
+			end
+		end
+	end else begin
+		if(old_ack & ~cd_hps_ack) begin
+			if(sload || (cd_hps_lba[0] != audbus_out0[9])) begin
+				load_state <= 0;
+				cd_hps_req <= 0;
+			end else begin
+				cd_hps_lba <= cd_hps_lba + 1'd1;
+				cd_hps_req <= 1;
+			end
+		end
+	end
+
+	if (sload) begin
+				load_cnt <= load_cnt + 1'd1;
+				if (load_cnt > max_load_cnt) begin
+					max_load_cnt <= load_cnt;
+				end
+	end
+	if (sload || cd_hps_req) begin
+				cload_cnt <= cload_cnt + 1'd1;
+				if (cload_cnt > max_cload_cnt) begin
+					max_cload_cnt <= cload_cnt;
+				end
+	end
+
+	if (img_rd_trig && cd_img_mounted) begin
+		if (audbus_out0[29:9] != imgbus_out[29:9]) begin
+			if ((audbus_out0[29:9] + 1'b1) != imgbus_out[29:9]) begin
+				audbus_out0[29:9] <= imgbus_out[29:9];
+				cd_hps_lba <= imgbus_out[29:9];
+				sload <= 1;
+				sload_wait <= 1'b0;
+		load_cnt[31:0] <= 32'h0;
+		cload_cnt[31:0] <= 32'h0;
+			end else begin
+				audbus_out0[29:9] <= imgbus_out[29:9];
+				cd_hps_lba <= imgbus_out[29:9] + 1'b1;
+				sload <= 1;
+				sload_wait <= 1'b0;
+		load_cnt[31:0] <= 32'h0;
+		cload_cnt[31:0] <= 32'h0;
+			end
+		end
+	end
+
+end
 
 wire [1:0] cart_oe;
 
 // 32-bit cart mode...
 //
 //assign cart_q1 = (!abus_out[2]) ? DDRAM_DOUT[63:32] : DDRAM_DOUT[31:00];
-assign cart_q1 = {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]};
+assign cart_q1 = ((!status[57] && !cd_img_mounted) || (&status[58:57])) ? {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]} : {cdram_dout[31:00],cdram_dout[63:32]};
+//assign cart_q1 = (!(|imgbus_out[29:24])) ? {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]} : {cdram_dout[31:00],cdram_dout[63:32]};
+wire [63:0] cart_cmp = {DDRAM_DOUT[31:00],DDRAM_DOUT[63:32]};
 
 wire [3:0] dram_oe = (~dram_cas_n) ? ~dram_oe_n[3:0] : 4'b0000;
 wire ram_rdy = ~ch1_64 || ~ch1_req || use_fastram;// && (ch1_ready);	// Latency kludge.
@@ -1006,7 +1482,7 @@ reg [7:0] cas_latch;
 wire [17:0] sdram_addr;
 assign sdram_addr[17:8] = ras_latch[9:0];
 assign sdram_addr[7:0] = cas_latch[7:0];
-wire use_fastram = (sdram_addr[17:15] == 3'h0) || (sdram_addr[17:15] == 3'h7); // 256K = 1/4 of address coverage
+wire use_fastram = (sdram_addr[17:15] == {status[36:34]}) || (sdram_addr[17:15] == ~{status[39:37]}); // 256K = 1/4 of address coverage
 wire [63:32] fastram;
 reg fastram_w;
 reg old_ch1_reqw;
@@ -1139,7 +1615,7 @@ sdram sdram
 	.ch1_ready          (ch1a_ready),
 	.ch1_64             (ch1_64),
 
-	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (cdos_index ? 23'h780000 : 23'h000000) : {1'b0,abus_out[22:2],memtrack_wr?abus_out[1]:1'b0} | (override ? 23'h780000 : 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h780000=24'hF00000
+	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (cdos_index ? 23'h780000 : 23'h000000) : {1'b0,abus_out[22:20] & cart_mask[22:20],abus_out[19:2],memtrack_wr?abus_out[1]:1'b0} | (override ? 23'h780000 : 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h780000=24'hF00000
 	.ch2_dout           (cart_qsc),            // data output to cpu
 	.ch2_din            ((loader_en) ? loader_data_bs : dram_d[15:0]),     // data input from cpu
 	.ch2_req            ((loader_en) ? loader_wr & (cart_index || cdos_index) : cart_rd_trig | cart_wr_trig),     // request

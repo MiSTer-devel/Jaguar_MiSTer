@@ -84,10 +84,12 @@ module jaguar
 	input [15:0] toc_data,
 	input toc_wr,
 
-	output      [28:0]  audbus_out,
+	output      [29:0]  audbus_out,
 	input       [63:0]  aud_in,
+	input       [63:0]  aud_cmp,
 	input               audwaitl,
 	output              aud_ce,
+	input               aud_busy,
 input aud_sess,
 
 	input               cd_en,
@@ -99,7 +101,8 @@ output overflow,
 output underflow,
 output errflow,
 output unhandled,
-	
+input cd_valid,
+output aud_16_eq,	
 	input               turbo,
 	input               vintbugfix,	
 	
@@ -1274,6 +1277,7 @@ _j_jerry jerry_inst
 	.snd_r           (snd_r),
 	.snd_clk         (audio_clk),
 	.dspwd           (dspwd),
+	.snd_eq          (aud_16_eq),
 	.sys_clk         (sys_clk)
 );
 
@@ -1303,9 +1307,11 @@ _butch butch_inst
 	.din             (xd_in[31:0]),
 	.dout            (b_dout[31:0]),
 	.doe             (b_doe),
-	.audbus_out      (audbus_out[28:0]),
+	.audbus_out      (audbus_out[29:0]),
 	.aud_in          (aud_in[63:0]),
+	.aud_cmp         (aud_cmp[63:0]),
 	.audwaitl        (audwaitl),
+	.aud_cbusy       (aud_busy),
 	.i2srxd          (j_xi2srxd),
 	.eint            (j_xeint[0]),
 	.sen             (b_xsck_oe),
@@ -1331,6 +1337,7 @@ _butch butch_inst
 	.underflowo (underflow),
 	.errflowo (errflow),
 	.unhandledo (unhandled),
+	.cd_valid(cd_valid),
 	.sys_clk         (sys_clk)
 );
 wire b_xsck_oe;

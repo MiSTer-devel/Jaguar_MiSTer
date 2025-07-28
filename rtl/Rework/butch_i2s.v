@@ -1,5 +1,6 @@
 //`include "defs.v"
 // altera message_off 10036
+// Based off j_i2s.v
 
 module _butch_i2s
 (
@@ -136,12 +137,15 @@ begin
 	end
 end
 wire [7:0] p_ = i2s3w ? din3[7:0] : p[7:0];
-wire [7:0] p__ = (wsout && p_[7:0]==8'h3) ? 8'h4 : p_[7:0]; // half way between 3 and 4
+wire cd2x = p_[7:0]==8'h3; // cd1x==8'h8
+wire [7:0] p__ = fractional[17] ? cd2x ? 8'h4 : 8'h9 : p_[7:0]; // 4 or 9 less logic than p_[]+1
+reg [17:0] fractional;
+reg old_wsout;
 // Goal = 9.279 for 2x
 // 2*(3+1)=8
 // 2*(4+1)=10
-// To increase accuracy use fractional counter instead of only alternating (alternating=(8+10)/2=9)
-// 1x is using 2*(8+1)=18. Same comment about using fractional
+// To increase accuracy using fractional counter instead of only alternating (alternating=(8+10)/2=9)
+// 1x alternating could use 2*(8+1)=18 (or 9->20). Same comment about using fractional
 
 //  1 frame = 588 longs (samples) = 2352 bytes
 // 75 frames = 1 second
@@ -151,6 +155,18 @@ wire [7:0] p__ = (wsout && p_[7:0]==8'h3) ? 8'h4 : p_[7:0]; // half way between 
 // 9647.5 cycles @ 106.36MHz = 90.703us
 // 358200 bytes/sec at double rate
 // 265909/(358.2*8) = 9.279 cycles/bit
+// 1.279 = 18'h1476D (lower 16 bits=fraction) for 2x
+// 0.558 = 18'h08ED9 (lower 16 bits=fraction) for 1x
+// When adds to 2, overflow to p[] which has resolution of 2
+always @(posedge sys_clk)
+begin
+	old_wsout <= wsout;
+	if (~old_clk && clk) begin
+		if (~wsout != old_wsout) begin
+			fractional[17:0] <= fractional[16:0] + cd2x ? 18'h1476D : 18'h8ED9; // default cd speed = 1x
+		end
+	end
+end
 
 // I2S.NET (54) - t[0] : dncnt
 // I2S.NET (55) - t[1-7] : dncnt

@@ -50,16 +50,30 @@ A handful of games now failt to boot, some with glitches or no audio, and others
  
 The older j68 CPU core has been replaced with FX68K, which is claimed to be cycle-accurate, and has shown to be very accurate so far.
 (on cores like Genesis). 
+This has now been replaced with nuked's 68k core.
 
 I added a Turbo option for the 68000 to the MiSTer OSD, which does help speed up some things, like the intro to Flashback.
 
 It does not speed up the main "Tom and Jerry" custom chips, though, except for reducing wait states on ROM/BIOS access.
 
-
+If a game doesn't work try turning on max compatibility or loading more than once.
 
 In summary: still a fair bit of work to be done. lol
 
 ElectronAsh.
+
+Remaining tasks (No guarantees to complete)
+- Data streaming through MiSTer Main (seems functional - needs more testing)
+- Opening OSD can crash data streaming (bigger cache might help)
+- Memory Track not working (probably commercial BIOS does not support Romulator/Alpine - need to switch to AMD or Atmel)
+- Weird timing display in VLM. Drops digits
+- CD-G support
+- DSP sometimes does not come up correctly even after reboot
+- Quality of life improvements like boot rom loading of CD BIOS (and memory track ROM)
+- Other CD formats beside cdi (cue/bin, chd - not sure if this is possible as it requires multi-session)
+- Single RAM improvement? Not sure if further improvement possible
+- Re-add turbo support? Not sure if possible with nuked 68k
+- Clean-up?
 
 In summary: Getting close. lol
 (updates GreyRogue)
