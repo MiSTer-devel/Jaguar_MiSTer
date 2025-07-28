@@ -283,7 +283,7 @@ localparam CONF_STR = {
 	"-;",
 	"-Options may crash;",
 	"RF,Reset RAM(debug);",
-	"D1OG,SDRAM,2,1(debug);",
+	"D2OG,SDRAM,2,1(debug);",
 	"oU,Debug Save,No,Yes;",
 	"oV,Compare BIN,No,Yes;",
 	"oM,Disable DSP,No,Yes;",
@@ -507,7 +507,7 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | status[15];
 
-wire xresetl = !(reset | ioctl_download);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
+wire xresetl = !(reset | os_download | cart_download | cue_download);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
 wire [9:0] dram_a;
 wire dram_ras_n;
 wire dram_cas_n;

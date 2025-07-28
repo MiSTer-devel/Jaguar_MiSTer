@@ -76,8 +76,7 @@ set_global_assignment -name SEED 1
 source sys/sys.tcl
 source sys/sys_dual_sdram.tcl
 source files_Rework.qip
-set_global_assignment -name ENABLE_SIGNALTAP ON
-set_global_assignment -name USE_SIGNALTAP_FILE stp1.stp
+
 set_global_assignment -name CDF_FILE jtag.cdf
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name SYSTEMVERILOG_FILE Jaguar.sv
