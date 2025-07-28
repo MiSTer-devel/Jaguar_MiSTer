@@ -104,6 +104,11 @@ output unhandled,
 	input               vintbugfix,	
 	
 	input ddreq,
+	
+	output        m68k_clk,
+	output [22:0] m68k_addr,
+	output [15:0] m68k_bus_do,
+	input [15:0]  m68k_di,
 
 	input               ntsc
 );
@@ -1360,6 +1365,7 @@ flipflop xbgl_ff
 );
 
 assign fx68k_clk = turbo ? (ce_26_6_p1 | ce_26_6_p2) : j_xcpuclk;
+assign m68k_clk = fx68k_clk;
 
 m68kcpu m68k_inst
 (
@@ -1375,7 +1381,7 @@ m68kcpu m68k_inst
 	.RESET_pull   (fx68k_reset_pull),
 	.HALT_i       (fx68k_halt),
 	.HALT_pull    (fx68k_halt_pull),
-	.DATA_i       (fx68k_din),
+	.DATA_i       (m68k_di),
 	.DATA_o       (fx68k_dout),
 	.DATA_z       (fx68k_data_z),
 	.E_CLK        (fx68k_e),
@@ -1391,6 +1397,9 @@ m68kcpu m68k_inst
 	.UDS          (fx68k_uds_n),
 	.strobe_z     ()
 );
+
+assign m68k_addr = fx68k_address;
+assign m68k_bus_do = fx68k_din;
 
 // NTSC Virtual Jaguar:
 // 68000: 6525   GPU Internal: 88554   GPU External: 89907
