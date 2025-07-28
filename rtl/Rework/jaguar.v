@@ -54,6 +54,9 @@ module jaguar
 
 	input       [31:0]  joystick_0,
 	input       [31:0]  joystick_1,
+	input       [31:0]  joystick_2,
+	input       [31:0]  joystick_3,
+	input       [31:0]  joystick_4,
 	input       [7:0]   analog_0,      // Unsigned 0..255 analog input
 	input       [7:0]   analog_1,      // Unsigned 0..255 analog input
 	input       [7:0]   analog_2,      // Unsigned 0..255 analog input
@@ -61,9 +64,10 @@ module jaguar
 	input       [8:0]   spinner_0,
 	input       [8:0]   spinner_1,
 	input       [1:0]   spinner_speed,
+	input               team_tap_port1,
+	input               team_tap_port2,
 
 	input       [24:0]  ps2_mouse,
-
 	input               mouse_ena_1,
 	input               mouse_ena_2,
 
@@ -660,8 +664,213 @@ ps2_mouse mouse
 	.button_m(mouseButton_m)    // Active-LOW output!
 );
 
+// Team Tap for Port 1
+wire [5:0] team_tap_port1_row_n;
+
+jag_team_tap team_tap_port1_inst (
+	.col_n(~j_xjoy_in[3] ? u374_reg[3:0] : 4'b1111),
+	.enable(team_tap_port1),
+	.row_n(team_tap_port1_row_n),
+	
+	// Controller A inputs
+	.but_a_right(joystick_0[0]),
+	.but_a_left(joystick_0[1]),
+	.but_a_down(joystick_0[2]),
+	.but_a_up(joystick_0[3]),
+	.but_a_a(joystick_0[4]),
+	.but_a_b(joystick_0[5]),
+	.but_a_c(joystick_0[6]),
+	.but_a_option(joystick_0[7]),
+	.but_a_pause(joystick_0[8]),
+	.but_a_1(joystick_0[9]),
+	.but_a_2(joystick_0[10]),
+	.but_a_3(joystick_0[11]),
+	.but_a_4(joystick_0[12]),
+	.but_a_5(joystick_0[13]),
+	.but_a_6(joystick_0[14]),
+	.but_a_7(joystick_0[15]),
+	.but_a_8(joystick_0[16]),
+	.but_a_9(joystick_0[17]),
+	.but_a_0(joystick_0[18]),
+	.but_a_star(joystick_0[19]),
+	.but_a_hash(joystick_0[20]),
+	
+	// Controller B inputs
+	.but_b_right(joystick_1[0]),
+	.but_b_left(joystick_1[1]),
+	.but_b_down(joystick_1[2]),
+	.but_b_up(joystick_1[3]),
+	.but_b_a(joystick_1[4]),
+	.but_b_b(joystick_1[5]),
+	.but_b_c(joystick_1[6]),
+	.but_b_option(joystick_1[7]),
+	.but_b_pause(joystick_1[8]),
+	.but_b_1(joystick_1[9]),
+	.but_b_2(joystick_1[10]),
+	.but_b_3(joystick_1[11]),
+	.but_b_4(joystick_1[12]),
+	.but_b_5(joystick_1[13]),
+	.but_b_6(joystick_1[14]),
+	.but_b_7(joystick_1[15]),
+	.but_b_8(joystick_1[16]),
+	.but_b_9(joystick_1[17]),
+	.but_b_0(joystick_1[18]),
+	.but_b_star(joystick_1[19]),
+	.but_b_hash(joystick_1[20]),
+	
+	// Controller C inputs
+	.but_c_right(joystick_2[0]),
+	.but_c_left(joystick_2[1]),
+	.but_c_down(joystick_2[2]),
+	.but_c_up(joystick_2[3]),
+	.but_c_a(joystick_2[4]),
+	.but_c_b(joystick_2[5]),
+	.but_c_c(joystick_2[6]),
+	.but_c_option(joystick_2[7]),
+	.but_c_pause(joystick_2[8]),
+	.but_c_1(joystick_2[9]),
+	.but_c_2(joystick_2[10]),
+	.but_c_3(joystick_2[11]),
+	.but_c_4(joystick_2[12]),
+	.but_c_5(joystick_2[13]),
+	.but_c_6(joystick_2[14]),
+	.but_c_7(joystick_2[15]),
+	.but_c_8(joystick_2[16]),
+	.but_c_9(joystick_2[17]),
+	.but_c_0(joystick_2[18]),
+	.but_c_star(joystick_2[19]),
+	.but_c_hash(joystick_2[20]),
+	
+	// Controller D inputs
+	.but_d_right(joystick_3[0]),
+	.but_d_left(joystick_3[1]),
+	.but_d_down(joystick_3[2]),
+	.but_d_up(joystick_3[3]),
+	.but_d_a(joystick_3[4]),
+	.but_d_b(joystick_3[5]),
+	.but_d_c(joystick_3[6]),
+	.but_d_option(joystick_3[7]),
+	.but_d_pause(joystick_3[8]),
+	.but_d_1(joystick_3[9]),
+	.but_d_2(joystick_3[10]),
+	.but_d_3(joystick_3[11]),
+	.but_d_4(joystick_3[12]),
+	.but_d_5(joystick_3[13]),
+	.but_d_6(joystick_3[14]),
+	.but_d_7(joystick_3[15]),
+	.but_d_8(joystick_3[16]),
+	.but_d_9(joystick_3[17]),
+	.but_d_0(joystick_3[18]),
+	.but_d_star(joystick_3[19]),
+	.but_d_hash(joystick_3[20])
+);
+
+// Team Tap for Port 2
+wire [5:0] team_tap_port2_row_n;
+wire [3:0] joy2_col_reversed = {u374_reg[4], u374_reg[5], u374_reg[6], u374_reg[7]};
+
+jag_team_tap team_tap_port2_inst (
+	.col_n(~j_xjoy_in[3] ? joy2_col_reversed : 4'b1111),
+	.enable(team_tap_port2),
+	.row_n(team_tap_port2_row_n),
+	
+	// Controller A inputs
+	.but_a_right(joystick_1[0]),
+	.but_a_left(joystick_1[1]),
+	.but_a_down(joystick_1[2]),
+	.but_a_up(joystick_1[3]),
+	.but_a_a(joystick_1[4]),
+	.but_a_b(joystick_1[5]),
+	.but_a_c(joystick_1[6]),
+	.but_a_option(joystick_1[7]),
+	.but_a_pause(joystick_1[8]),
+	.but_a_1(joystick_1[9]),
+	.but_a_2(joystick_1[10]),
+	.but_a_3(joystick_1[11]),
+	.but_a_4(joystick_1[12]),
+	.but_a_5(joystick_1[13]),
+	.but_a_6(joystick_1[14]),
+	.but_a_7(joystick_1[15]),
+	.but_a_8(joystick_1[16]),
+	.but_a_9(joystick_1[17]),
+	.but_a_0(joystick_1[18]),
+	.but_a_star(joystick_1[19]),
+	.but_a_hash(joystick_1[20]),
+	
+	// Controller B inputs
+	.but_b_right(joystick_2[0]),
+	.but_b_left(joystick_2[1]),
+	.but_b_down(joystick_2[2]),
+	.but_b_up(joystick_2[3]),
+	.but_b_a(joystick_2[4]),
+	.but_b_b(joystick_2[5]),
+	.but_b_c(joystick_2[6]),
+	.but_b_option(joystick_2[7]),
+	.but_b_pause(joystick_2[8]),
+	.but_b_1(joystick_2[9]),
+	.but_b_2(joystick_2[10]),
+	.but_b_3(joystick_2[11]),
+	.but_b_4(joystick_2[12]),
+	.but_b_5(joystick_2[13]),
+	.but_b_6(joystick_2[14]),
+	.but_b_7(joystick_2[15]),
+	.but_b_8(joystick_2[16]),
+	.but_b_9(joystick_2[17]),
+	.but_b_0(joystick_2[18]),
+	.but_b_star(joystick_2[19]),
+	.but_b_hash(joystick_2[20]),
+	
+	// Controller C inputs
+	.but_c_right(joystick_3[0]),
+	.but_c_left(joystick_3[1]),
+	.but_c_down(joystick_3[2]),
+	.but_c_up(joystick_3[3]),
+	.but_c_a(joystick_3[4]),
+	.but_c_b(joystick_3[5]),
+	.but_c_c(joystick_3[6]),
+	.but_c_option(joystick_3[7]),
+	.but_c_pause(joystick_3[8]),
+	.but_c_1(joystick_3[9]),
+	.but_c_2(joystick_3[10]),
+	.but_c_3(joystick_3[11]),
+	.but_c_4(joystick_3[12]),
+	.but_c_5(joystick_3[13]),
+	.but_c_6(joystick_3[14]),
+	.but_c_7(joystick_3[15]),
+	.but_c_8(joystick_3[16]),
+	.but_c_9(joystick_3[17]),
+	.but_c_0(joystick_3[18]),
+	.but_c_star(joystick_3[19]),
+	.but_c_hash(joystick_3[20]),
+	
+	// Controller D inputs
+	.but_d_right(joystick_4[0]),
+	.but_d_left(joystick_4[1]),
+	.but_d_down(joystick_4[2]),
+	.but_d_up(joystick_4[3]),
+	.but_d_a(joystick_4[4]),
+	.but_d_b(joystick_4[5]),
+	.but_d_c(joystick_4[6]),
+	.but_d_option(joystick_4[7]),
+	.but_d_pause(joystick_4[8]),
+	.but_d_1(joystick_4[9]),
+	.but_d_2(joystick_4[10]),
+	.but_d_3(joystick_4[11]),
+	.but_d_4(joystick_4[12]),
+	.but_d_5(joystick_4[13]),
+	.but_d_6(joystick_4[14]),
+	.but_d_7(joystick_4[15]),
+	.but_d_8(joystick_4[16]),
+	.but_d_9(joystick_4[17]),
+	.but_d_0(joystick_4[18]),
+	.but_d_star(joystick_4[19]),
+	.but_d_hash(joystick_4[20])
+);
+
+// Standard controller mux instances (used when Team Tap is not active)
 wire [5:0] joy2_row_n;
 wire [5:0] joy1_row_n;
+
 
 jag_controller_mux controller_mux_1
 (
@@ -691,34 +900,31 @@ jag_controller_mux controller_mux_1
 	.but_hash   (joystick_0[20])
 );
 
-wire [3:0] joy2_col_reversed = {u374_reg[4], u374_reg[5], u374_reg[6], u374_reg[7]};
-
 jag_controller_mux controller_mux_2
 (
 	.col_n      (~j_xjoy_in[3] ? joy2_col_reversed : 4'b1111),
 	.row_n      (joy2_row_n),
-
-	.but_right  ((!mouse_ena_2) ? joystick_1[0] | sp_out1[0] : mouseY[0]),
-	.but_left   ((!mouse_ena_2) ? joystick_1[1] | sp_out1[1] : mouseY[1]),
-	.but_down   ((!mouse_ena_2) ? joystick_1[2] : mouseX[1]),
-	.but_up     ((!mouse_ena_2) ? joystick_1[3] : mouseX[0]),
-	.but_a      ((!mouse_ena_2) ? joystick_1[4] : ~mouseButton_l),
-	.but_b      ((!mouse_ena_2) ? joystick_1[5] : ~mouseButton_m),
-	.but_c      (joystick_1[6]),
-	.but_option (joystick_1[7]),
-	.but_pause  ((!mouse_ena_2) ? joystick_1[8] : ~mouseButton_r),
-	.but_1      (joystick_1[9]),
-	.but_2      (joystick_1[10]),
-	.but_3      (joystick_1[11]),
-	.but_4      (joystick_1[12]),
-	.but_5      (joystick_1[13]),
-	.but_6      (joystick_1[14]),
-	.but_7      (joystick_1[15]),
-	.but_8      (joystick_1[16]),
-	.but_9      (joystick_1[17]),
-	.but_0      (joystick_1[18]),
-	.but_star   (joystick_1[19]),
-	.but_hash   (joystick_1[20])
+	.but_right  ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[0] : joystick_1[0]) | sp_out1[0] : mouseY[0]),
+	.but_left   ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[1] : joystick_1[1]) | sp_out1[1] : mouseY[1]),
+	.but_down   ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[2] : joystick_1[2]) : mouseX[1]),
+	.but_up     ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[3] : joystick_1[3]) : mouseX[0]),
+	.but_a      ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[4] : joystick_1[4]) : ~mouseButton_l),
+	.but_b      ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[5] : joystick_1[5]) : ~mouseButton_m),
+	.but_c      (team_tap_port1 ? joystick_4[6] : joystick_1[6]),
+	.but_option (team_tap_port1 ? joystick_4[7] : joystick_1[7]),
+	.but_pause  ((!mouse_ena_2) ? (team_tap_port2 ? joystick_4[8] : joystick_1[8]) : ~mouseButton_r),
+	.but_1      (team_tap_port1 ? joystick_4[9] : joystick_1[9]),
+	.but_2      (team_tap_port1 ? joystick_4[10] : joystick_1[10]),
+	.but_3      (team_tap_port1 ? joystick_4[11] : joystick_1[11]),
+	.but_4      (team_tap_port1 ? joystick_4[12] : joystick_1[12]),
+	.but_5      (team_tap_port1 ? joystick_4[13] : joystick_1[13]),
+	.but_6      (team_tap_port1 ? joystick_4[14] : joystick_1[14]),
+	.but_7      (team_tap_port1 ? joystick_4[15] : joystick_1[15]),
+	.but_8      (team_tap_port1 ? joystick_4[16] : joystick_1[16]),
+	.but_9      (team_tap_port1 ? joystick_4[17] : joystick_1[17]),
+	.but_0      (team_tap_port1 ? joystick_4[18] : joystick_1[18]),
+	.but_star   (team_tap_port1 ? joystick_4[19] : joystick_1[19]),
+	.but_hash   (team_tap_port1 ? joystick_4[20] : joystick_1[20])
 );
 
 
@@ -810,25 +1016,23 @@ end
 assign joy[0] = ee_do;
 assign joy[7:1] = ~j_xjoy_in[3] ? u374_reg[7:1] : 7'b1111_111;      // Port 1, pins 4:2. / Port 2, pins 4:1.
 
-assign joy[8]  = joy1_row_n[5];        // Port 1, pin 14. Mouse XB.
-assign joy[9]  = joy1_row_n[4];        // Port 1, pin 13. Mouse XA.
-assign joy[10] = joy1_row_n[3];        // Port 1, pin 12. Mouse YA / Rotary Encoder XA.
-assign joy[11] = joy1_row_n[2];        // Port 1, pin 11. Mouse YB / Rotary Encoder XB.
-assign b[1]    = joy1_row_n[1];    		// Port 1, pin 10. B1. Mouse Left Button / Rotary Encoder button.
-assign b[0]    = joy1_row_n[0];    		// Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
+// Select the appropriate row data based on Team Tap configuration
+wire [5:0] selected_joy1_row = team_tap_port1 ? team_tap_port1_row_n : joy1_row_n;
+wire [5:0] selected_joy2_row = team_tap_port2 ? team_tap_port2_row_n : joy2_row_n;
 
-// Standard Jag controller mapping...
-// http://arcarc.xmission.com/Web%20Archives/Deathskull%20%28May-2006%29/games/tech/jagcont.html
-//
-// Mouse / Rotary Encoder hookup info, and test programs...
-// http://mdgames.de/jag_end.htm
-//
-assign joy[12] = joy2_row_n[5];        // Port 2, pin 14.
-assign joy[13] = joy2_row_n[4];        // Port 2, pin 13.
-assign joy[14] = joy2_row_n[3];        // Port 2, pin 12.
-assign joy[15] = joy2_row_n[2];        // Port 2, pin 11.
-assign b[3]    = joy2_row_n[1];    		// Port 2, pin 10. B3.
-assign b[2]    = joy2_row_n[0];    		// Port 2, pin 6. B2/Light Pen 1.
+assign joy[8]  = selected_joy1_row[5];        // Port 1, pin 14. Mouse XB.
+assign joy[9]  = selected_joy1_row[4];        // Port 1, pin 13. Mouse XA.
+assign joy[10] = selected_joy1_row[3];        // Port 1, pin 12. Mouse YA / Rotary Encoder XA.
+assign joy[11] = selected_joy1_row[2];        // Port 1, pin 11. Mouse YB / Rotary Encoder XB.
+assign b[1]    = selected_joy1_row[1];        // Port 1, pin 10. B1. Mouse Left Button / Rotary Encoder button.
+assign b[0]    = selected_joy1_row[0];        // Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
+
+assign joy[12] = selected_joy2_row[5];        // Port 2, pin 14.
+assign joy[13] = selected_joy2_row[4];        // Port 2, pin 13.
+assign joy[14] = selected_joy2_row[3];        // Port 2, pin 12.
+assign joy[15] = selected_joy2_row[2];        // Port 2, pin 11.
+assign b[3]    = selected_joy2_row[1];        // Port 2, pin 10. B3.
+assign b[2]    = selected_joy2_row[0];        // Port 2, pin 6. B2/Light Pen 1.
 
 assign b[4] = ntsc;             // 0=PAL, 1=NTSC
 assign b[5] = 1'b1;             // 256 (number of columns of the DRAM)

@@ -239,7 +239,7 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X XXXXXXXXXXXXXXXXXXXXX XXXXXXXX                     XXXXX     XX
+// X XXXXXXXXXXXXXXX XXXXX XXXXXXXX XX                  XXXXX     XX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -276,7 +276,7 @@ localparam CONF_STR = {
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
 	"RM,P1+P2 Pause;",
-	"OH,JagLink,Disabled,Enabled;",
+	"o01,Team Tap,Disabled,JoyPort1,JoyPort2;",
 	"-;",
 	"-Options may crash;",
 	"RF,Reset RAM(debug);",
@@ -299,6 +299,9 @@ wire [63:0] status;
 wire  [1:0] buttons;
 wire [31:0] joystick_0;
 wire [31:0] joystick_1;
+wire [31:0] joystick_2;
+wire [31:0] joystick_3;
+wire [31:0] joystick_4;
 wire        ioctl_download;
 wire        ioctl_wr;
 wire [24:0] ioctl_addr;
@@ -343,6 +346,9 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1)) hps_io
 
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
+	.joystick_2(joystick_2),
+	.joystick_3(joystick_3),
+	.joystick_4(joystick_4),
 	.joystick_l_analog_0(analog_0),
 	.joystick_l_analog_1(analog_1),
 
@@ -544,8 +550,8 @@ wire [15:0] aud_16_r;
 
 wire ser_data_in;
 wire ser_data_out;
-assign ser_data_in = status[17] ? USER_IN[0] : 1'b1;
-assign USER_OUT[1] = status[17] ? ser_data_out : 1'b1;
+assign ser_data_in = USER_IN[0];
+assign USER_OUT[1] = ser_data_out;
 
 jaguar jaguar_inst
 (
@@ -603,6 +609,9 @@ jaguar jaguar_inst
 
 	.joystick_0( {joystick_0[31:9], joystick_0[8]|p1p2pause_active,joystick_0[7:0]} ) ,
 	.joystick_1( {joystick_1[31:9], joystick_1[8]|p1p2pause_active,joystick_1[7:0]} ) ,
+	.joystick_2( {joystick_2[31:9], joystick_2[8]|p1p2pause_active,joystick_2[7:0]} ) ,
+	.joystick_3( {joystick_3[31:9], joystick_3[8]|p1p2pause_active,joystick_3[7:0]} ) ,
+	.joystick_4( {joystick_4[31:9], joystick_4[8]|p1p2pause_active,joystick_4[7:0]} ) ,
 	.analog_0( $signed(analog_0[7:0]) + 9'sd127 ),
 	.analog_1( $signed(analog_0[15:8]) + 9'sd127 ),
 	.analog_2( $signed(analog_1[7:0]) + 9'sd127 ),
@@ -610,6 +619,8 @@ jaguar jaguar_inst
 	.spinner_0(spinner_0),
 	.spinner_1(spinner_1),
 	.spinner_speed(status[21:20]),
+	.team_tap_port1( status[33:32]==1 ),
+	.team_tap_port2( status[33:32]==2 ),
 
 	.startcas( startcas ) ,
 
