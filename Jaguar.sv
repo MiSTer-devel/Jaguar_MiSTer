@@ -239,7 +239,7 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX                     XXXXXXX   XX
+// X XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXX            XXXXXXX   XX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -288,8 +288,8 @@ localparam CONF_STR = {
 	"oM,Disable DSP,No,Yes;",
 	"OE,VSync,vvs,hvs(debug);",
 	"OS,Tap Clock,1,4;",
-	"o02,FastRAM1,0,1,2,3,4,5,6,7;",
-	"o35,FastRAM2,7,6,5,4,3,2,1,0;",
+	"o24,FastRAM1,0,1,2,3,4,5,6,7;",
+	"o57,FastRAM2,7,6,5,4,3,2,1,0;",
 	"-;",
 	"R0,Reset;",
 	"J1,A,B,C,Option,Pause,1,2,3,4,5,6,7,8,9,0,Star,Hash;",
@@ -1456,7 +1456,7 @@ reg [7:0] cas_latch;
 wire [17:0] sdram_addr;
 assign sdram_addr[17:8] = ras_latch[9:0];
 assign sdram_addr[7:0] = cas_latch[7:0];
-wire use_fastram = (sdram_addr[17:15] == {status[34:32]}) || (sdram_addr[17:15] == ~{status[37:35]}); // 256K = 1/4 of address coverage
+wire use_fastram = (sdram_addr[17:15] == {status[36:34]}) || (sdram_addr[17:15] == ~{status[39:37]}); // 256K = 1/4 of address coverage
 wire [63:32] fastram;
 reg fastram_w;
 reg old_ch1_reqw;
