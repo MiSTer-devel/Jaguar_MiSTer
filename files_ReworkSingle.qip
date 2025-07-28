@@ -7,8 +7,11 @@ set_global_assignment -name QIP_FILE           rtl/fx68k/fx68k.qip
 set_global_assignment -name VERILOG_FILE       rtl/nuked-68k/68k.v
 
 set_global_assignment -name VERILOG_FILE       rtl/jag_controller_mux.v
+set_global_assignment -name VERILOG_FILE       rtl/jag_team_tap.v
 set_global_assignment -name VERILOG_FILE       rtl/ps2_mouse.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/keyboard.sv
+
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cheatcodes.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/ddram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram_dual.sv

@@ -266,6 +266,9 @@ localparam CONF_STR = {
 	"O3,CPU Speed,Normal,Turbo;",
 	"ON,Vint Fix,Yes,No;",
 	"-;",
+	"C,Cheats;",
+	"H1O[23],Cheats Enabled,Yes,No;",
+	"-;",
 	"D0RC,Load Backup RAM;",
 	"D0RB,Save Backup RAM;",
 	"D0OD,Autosave,On,Off;",
@@ -278,11 +281,11 @@ localparam CONF_STR = {
 	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
 	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
 	"RM,P1+P2 Pause;",
-	"OH,JagLink,Disabled,Enabled;",
+	"o01,Team Tap,Disabled,JoyPort1,JoyPort2;",
 	"-;",
 	"-Options may crash;",
 	"RF,Reset RAM(debug);",
-	"D1OG,SDRAM,2,1(debug);",
+	"D2OG,SDRAM,2,1(debug);",
 	"oU,Debug Save,No,Yes;",
 	"oV,Compare BIN,No,Yes;",
 	"oM,Disable DSP,No,Yes;",
@@ -303,6 +306,9 @@ wire [63:0] status;
 wire  [1:0] buttons;
 wire [31:0] joystick_0;
 wire [31:0] joystick_1;
+wire [31:0] joystick_2;
+wire [31:0] joystick_3;
+wire [31:0] joystick_4;
 wire        ioctl_download;
 wire        ioctl_wr;
 wire [24:0] ioctl_addr;
@@ -364,6 +370,9 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
+	.joystick_2(joystick_2),
+	.joystick_3(joystick_3),
+	.joystick_4(joystick_4),
 	.joystick_l_analog_0(analog_0),
 	.joystick_l_analog_1(analog_1),
 
@@ -373,7 +382,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~bk_ena}),
+	.status_menumask({aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~gg_available,~bk_ena}),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -429,6 +438,7 @@ wire cdos_index = ioctl_index[5:0] == 3;
 wire cue_index = ioctl_index[5:0] == 7;
 wire os_download = ioctl_download && os_index;
 wire cart_download = ioctl_download & cart_index;
+wire code_download = ioctl_download & &ioctl_index;
 //wire cdos_download = ioctl_download && cdos_index;
 wire cue_download = ioctl_download && cue_index;
 wire override;
@@ -536,7 +546,7 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | status[15];
 
-wire xresetl = !(reset | ioctl_download | !cd_init);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
+wire xresetl = !(reset | os_download | cart_download | cue_download | !cd_init);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
 wire [9:0] dram_a;
 wire dram_ras_n;
 wire dram_cas_n;
@@ -585,8 +595,12 @@ wire [15:0] aud_16_r;
 
 wire ser_data_in;
 wire ser_data_out;
-assign ser_data_in = status[17] ? USER_IN[0] : 1'b1;
-assign USER_OUT[1] = status[17] ? ser_data_out : 1'b1;
+assign ser_data_in = USER_IN[0];
+assign USER_OUT[1] = ser_data_out;
+
+wire m68k_clk;
+wire [23:1] m68k_addr;
+wire [15:0] m68k_bus_do;
 
 jaguar jaguar_inst
 (
@@ -644,6 +658,9 @@ jaguar jaguar_inst
 
 	.joystick_0( {joystick_0[31:9], joystick_0[8]|p1p2pause_active,joystick_0[7:0]} ) ,
 	.joystick_1( {joystick_1[31:9], joystick_1[8]|p1p2pause_active,joystick_1[7:0]} ) ,
+	.joystick_2( {joystick_2[31:9], joystick_2[8]|p1p2pause_active,joystick_2[7:0]} ) ,
+	.joystick_3( {joystick_3[31:9], joystick_3[8]|p1p2pause_active,joystick_3[7:0]} ) ,
+	.joystick_4( {joystick_4[31:9], joystick_4[8]|p1p2pause_active,joystick_4[7:0]} ) ,
 	.analog_0( $signed(analog_0[7:0]) + 9'sd127 ),
 	.analog_1( $signed(analog_0[15:8]) + 9'sd127 ),
 	.analog_2( $signed(analog_1[7:0]) + 9'sd127 ),
@@ -651,6 +668,8 @@ jaguar jaguar_inst
 	.spinner_0(spinner_0),
 	.spinner_1(spinner_1),
 	.spinner_speed(status[21:20]),
+	.team_tap_port1( status[33:32]==1 ),
+	.team_tap_port2( status[33:32]==2 ),
 
 	.startcas( startcas ) ,
 
@@ -688,7 +707,14 @@ jaguar jaguar_inst
 
 .ddreq(!status[54]),
 	.comlynx_tx( ser_data_out ) ,
-	.comlynx_rx( ser_data_in )
+	.comlynx_rx( ser_data_in ) ,
+
+	// cheat engine
+	.m68k_clk(m68k_clk),
+	.m68k_addr(m68k_addr),
+	.m68k_bus_do(m68k_bus_do),
+	.m68k_di(m68k_data)
+
 );
 
 wire aud_ce;
@@ -1905,5 +1931,51 @@ always @(posedge clk_sys) begin
 
 end
 
+///////////////////////////////////////////////////
+// Cheat codes loading for WIDE IO (16 bit)
+reg [128:0] gg_code;
+wire        gg_available;
+
+// Code layout:
+// {clock bit, code flags,     32'b address, 32'b compare, 32'b replace}
+//  128        127:96          95:64         63:32         31:0
+// Integer values are in BIG endian byte order, so it up to the loader
+// or generator of the code to re-arrange them correctly.
+
+always_ff @(posedge clk_sys) begin
+	gg_code[128] <= 1'b0;
+
+	if (code_download & ioctl_wr) begin
+		case (ioctl_addr[3:0])
+			0:  gg_code[111:96]  <= ioctl_data; // Flags Bottom Word
+			2:  gg_code[127:112] <= ioctl_data; // Flags Top Word
+			4:  gg_code[79:64]   <= ioctl_data; // Address Bottom Word
+			6:  gg_code[95:80]   <= ioctl_data; // Address Top Word
+			8:  gg_code[47:32]   <= ioctl_data; // Compare Bottom Word
+			10: gg_code[63:48]   <= ioctl_data; // Compare top Word
+			12: gg_code[15:0]    <= ioctl_data; // Replace Bottom Word
+			14: begin
+				gg_code[31:16]   <= ioctl_data; // Replace Top Word
+				gg_code[128]     <=  1'b1;      // Clock it in
+			end
+		endcase
+	end
+end
+
+reg [15:0] m68k_data;
+always @(posedge m68k_clk) m68k_data <= m68k_genie_data;
+
+wire [15:0] m68k_genie_data;
+CODES #(.ADDR_WIDTH(24), .DATA_WIDTH(16), .BIG_ENDIAN(1)) codes_68k
+(
+	.clk(clk_sys),
+	.reset(cart_download | (code_download && ioctl_wr && !ioctl_addr)),
+	.enable(~status[23]),
+	.code(gg_code),
+	.available(gg_available),
+	.addr_in({m68k_addr, 1'b0}),
+	.data_in(m68k_bus_do),
+	.data_out(m68k_genie_data)
+);
 
 endmodule
