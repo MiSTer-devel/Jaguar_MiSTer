@@ -1,4 +1,4 @@
-set_global_assignment -name SDC_FILE           Jaguar.sdc
+set_global_assignment -name SDC_FILE           Jaguar_DS.sdc
 
 set_global_assignment -name SYSTEMVERILOG_FILE Jaguar.sv
 set_global_assignment -name QIP_FILE           rtl/jaguar/jaguar.qip
