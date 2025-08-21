@@ -66,6 +66,8 @@ module jaguar
 	input       [1:0]   spinner_speed,
 	input               team_tap_port1,
 	input               team_tap_port2,
+	input       [1:0]   lightgun_mode,
+	input       [1:0]   lightgun_crosshair,
 
 	input       [24:0]  ps2_mouse,
 	input               mouse_ena_1,
@@ -672,6 +674,71 @@ ps2_mouse mouse
 	.button_m(mouseButton_m)    // Active-LOW output!
 );
 
+// --- Raster beam counters ---
+reg [11:0] beam_x = 12'd0;
+reg [9:0] beam_y = 10'd0;
+
+wire hsync_int = ~vga_hs_n; // active-high HSYNC
+wire vsync_int = ~vga_vs_n; // active-high VSYNC
+reg  prev_hs = 1'b0, prev_vs = 1'b0;
+
+always @(posedge xvclk or negedge xresetl) begin
+  if (!xresetl) begin
+    beam_x  <= 12'd0;
+    beam_y  <= 10'd0;
+    prev_hs <= 1'b0;
+    prev_vs <= 1'b0;
+  end else begin
+    prev_hs <= hsync_int;
+    prev_vs <= vsync_int;
+    
+    // new frame
+    if (~prev_vs && vsync_int) begin
+      beam_x <= 12'd0;
+      beam_y <= 10'd0;
+    end
+    // new line
+    else if (~prev_hs && hsync_int) begin
+      beam_x <= 12'd0;
+      beam_y <= beam_y + 10'd1;
+    end
+    // advance within line
+    else begin
+      beam_x <= beam_x + 12'd1;
+    end
+  end
+end
+
+// Lightgun instance
+wire lp0, lp1;
+wire draw_crosshair;
+
+wire use_mouse   = (lightgun_mode == 2'd3);
+wire use_joy1    = (lightgun_mode == 2'd1);
+wire use_joy2    = (lightgun_mode == 2'd2);
+wire lg_enabled  = (lightgun_mode != 2'd0);
+wire lg_port_select = 1'b0; // Move to option?
+
+jaguar_lightgun lightgun_inst (
+    .clk(xvclk),
+    .reset(~xresetl),
+    .ntsc(ntsc),
+    .ps2_mouse(use_mouse ? ps2_mouse : 25'd0),
+    .joy_x(use_joy1 ? analog_0 : analog_2),
+    .joy_y(use_joy1 ? analog_1 : analog_3),
+    .use_joystick(use_joy1 || use_joy2),
+    .enable(lg_enabled),
+    .port_select(lg_port_select),
+    .crosshair_mode(lightgun_crosshair),
+    .cycle(beam_x),
+    .scanline(beam_y),
+    .vsync(vsync_int),
+    .blank(blank),
+    .lp0(lp0), 
+    .lp1(lp1),
+    .draw_crosshair(draw_crosshair)
+);
+
 // Team Tap for Port 1
 wire [5:0] team_tap_port1_row_n;
 
@@ -889,8 +956,8 @@ jag_controller_mux controller_mux_1
 	.but_left   ((!mouse_ena_1) ? joystick_0[1] | sp_out0[1] : mouseY[1]),
 	.but_down   ((!mouse_ena_1) ? joystick_0[2] : mouseX[1]),
 	.but_up     ((!mouse_ena_1) ? joystick_0[3] : mouseX[0]),
-	.but_a      ((!mouse_ena_1) ? joystick_0[4] : ~mouseButton_l),
-	.but_b      ((!mouse_ena_1) ? joystick_0[5] : ~mouseButton_m),
+	.but_a      ((!mouse_ena_1) ? joystick_0[4] : joystick_0[4] | ~mouseButton_l),
+	.but_b      ((!lg_enabled && (lg_port_select != 1'b0)) ? joystick_0[5] : joystick_0[5] | ~mouseButton_l),
 	.but_c      (joystick_0[6]),
 	.but_option (joystick_0[7]),
 	.but_pause  ((!mouse_ena_1) ? joystick_0[8] : ~mouseButton_r),
@@ -916,8 +983,8 @@ jag_controller_mux controller_mux_2
 	.but_left   ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[1] : joystick_1[1]) | sp_out1[1] : mouseY[1]),
 	.but_down   ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[2] : joystick_1[2]) : mouseX[1]),
 	.but_up     ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[3] : joystick_1[3]) : mouseX[0]),
-	.but_a      ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[4] : joystick_1[4]) : ~mouseButton_l),
-	.but_b      ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[5] : joystick_1[5]) : ~mouseButton_m),
+	.but_a      ((!mouse_ena_2) ? (team_tap_port1 ? joystick_4[4] : joystick_1[4]) : joystick_1[4] | ~mouseButton_l),
+	.but_b      (team_tap_port1 ? joystick_4[5] : joystick_1[5]),
 	.but_c      (team_tap_port1 ? joystick_4[6] : joystick_1[6]),
 	.but_option (team_tap_port1 ? joystick_4[7] : joystick_1[7]),
 	.but_pause  ((!mouse_ena_2) ? (team_tap_port2 ? joystick_4[8] : joystick_1[8]) : ~mouseButton_r),
@@ -1033,14 +1100,14 @@ assign joy[9]  = selected_joy1_row[4];        // Port 1, pin 13. Mouse XA.
 assign joy[10] = selected_joy1_row[3];        // Port 1, pin 12. Mouse YA / Rotary Encoder XA.
 assign joy[11] = selected_joy1_row[2];        // Port 1, pin 11. Mouse YB / Rotary Encoder XB.
 assign b[1]    = selected_joy1_row[1];        // Port 1, pin 10. B1. Mouse Left Button / Rotary Encoder button.
-assign b[0]    = selected_joy1_row[0];        // Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
+assign b[0]    = (lg_enabled && (lg_port_select == 1'b0)) ? lp0 : selected_joy1_row[0];        // Port 1, pin 6. BO/Light Pen 0. Mouse Right Button.
 
 assign joy[12] = selected_joy2_row[5];        // Port 2, pin 14.
 assign joy[13] = selected_joy2_row[4];        // Port 2, pin 13.
 assign joy[14] = selected_joy2_row[3];        // Port 2, pin 12.
 assign joy[15] = selected_joy2_row[2];        // Port 2, pin 11.
 assign b[3]    = selected_joy2_row[1];        // Port 2, pin 10. B3.
-assign b[2]    = selected_joy2_row[0];        // Port 2, pin 6. B2/Light Pen 1.
+assign b[2]    = (lg_enabled && (lg_port_select == 1'b1)) ? lp1 : selected_joy2_row[0];        // Port 2, pin 6. B2/Light Pen 1.
 
 assign b[4] = ntsc;             // 0=PAL, 1=NTSC
 assign b[5] = 1'b1;             // 256 (number of columns of the DRAM)
@@ -1451,9 +1518,9 @@ fx68k fx68k_inst
 );
 */
 // VIDEO / 15 KHz (native) output...
-assign vga_r = xr[7:0];
-assign vga_g = xg[7:0];
-assign vga_b = xb[7:0];
+assign vga_r = draw_crosshair ? 8'hFF : xr;
+assign vga_g = draw_crosshair ? 8'h00 : xg;
+assign vga_b = draw_crosshair ? 8'h00 : xb;
 //assign vga_b = {xb[7:1], 1'b0}; // FIXME: Real Jaguar has the LSB of blue disconnected for no obvious reason.
 
 // AUDIO / I2S receiver
