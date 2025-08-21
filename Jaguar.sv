@@ -241,7 +241,7 @@ assign VIDEO_ARY = (!ar) ? 12'd2040 : 12'd0;
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXX            XXXXXXX   XX
+// X XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX XXXXXXXXXXXX        XXXXXXX   XX
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -265,7 +265,7 @@ localparam CONF_STR = {
 	"OU,Max Compatibility,No,Yes;",
 	"O2,Cart Checksum Patch,Off,On;",
 	"OT,Auto EEPROM,No,Yes;",
-	"O3,CPU Speed,Normal,Turbo;",
+	//"O3,CPU Speed,Normal,Turbo;",
 	"ON,Vint Fix,Yes,No;",
 	"-;",
 	"C,Cheats;",
@@ -275,15 +275,22 @@ localparam CONF_STR = {
 	"D0RB,Save Backup RAM;",
 	"D0OD,Autosave,On,Off;",
 	"-;",
-	"O4,Region Setting,NTSC,PAL;",
-	"O78,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"O9A,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-	"OIJ,Crop,None,Small,Primal;",
-	"-;",
-	"O56,Mouse,Disabled,JoyPort1,JoyPort2;",
-	"OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
-	"RM,P1+P2 Pause;",
-	"o01,Team Tap,Disabled,JoyPort1,JoyPort2;",
+	"P1,Audio & Video;",
+	"P1-;",
+	"P1O4,Region Setting,NTSC,PAL;",
+	"P1O78,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"P1O9A,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P1OIJ,Crop,None,Small,Primal;",
+	
+	"P2,Input Options;",
+	"P2-;",
+	"P2RM,P1+P2 Pause;",
+	"P2OKL,Spinner Speed,Normal,Faster,Slow,Slower;",
+	"P2o01,Team Tap,Disabled,JoyPort1,JoyPort2;",
+	"P2O56,Mouse,Disabled,JoyPort1,JoyPort2;",
+	"P2-;",
+	"P2o89,Light Gun,Disabled,Joy1,Joy2,Mouse;",
+	"DDP2oAB,Cross,Small,Medium,Large,None;",
 	"-;",
 	"-Options may crash;",
 	"RF,Reset RAM(debug);",
@@ -338,6 +345,8 @@ wire [15:0] analog_0;
 wire [15:0] analog_1;
 wire [8:0]  spinner_0;
 wire [8:0]  spinner_1;
+wire [1:0]  lightgun_mode = status[41:40];
+wire        crossmenu_disable = (lightgun_mode == 2'd0);
 
 reg [31:0]  cd_hps_lba;
 reg         cd_hps_req;
@@ -384,7 +393,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~gg_available,~bk_ena}),
+	.status_menumask({crossmenu_disable,aud_16_eq,clcnt,lcnt,overflow,underflow,errflow,unhandled,mismatch,tapclock,ram64,hide_64,~gg_available,~bk_ena}),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -672,6 +681,8 @@ jaguar jaguar_inst
 	.spinner_speed(status[21:20]),
 	.team_tap_port1( status[33:32]==1 ),
 	.team_tap_port2( status[33:32]==2 ),
+	.lightgun_mode( lightgun_mode ),
+	.lightgun_crosshair( status[43:42] ),
 
 	.startcas( startcas ) ,
 

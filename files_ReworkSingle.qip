@@ -9,7 +9,7 @@ set_global_assignment -name VERILOG_FILE       rtl/nuked-68k/68k.v
 set_global_assignment -name VERILOG_FILE       rtl/jag_controller_mux.v
 set_global_assignment -name VERILOG_FILE       rtl/jag_team_tap.v
 set_global_assignment -name VERILOG_FILE       rtl/ps2_mouse.v
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/keyboard.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/jag_lightgun.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cheatcodes.sv
 
