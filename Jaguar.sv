@@ -436,7 +436,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(2)) hps_io
 	.gamma_bus(gamma_bus)
 );
 
-wire j_info_req = joystick_0[4];
+wire j_info_req = 0;//joystick_0[4];
 wire [7:0] j_info = found_cd ? 8'h2 : 8'h1;//{5'b00,status[36:34]};//found_cd ? 8'h2 : 8'h1;
 reg [31:0] loader_addr;
 
@@ -1508,8 +1508,8 @@ spram #(.addr_width(17), .data_width(8), .mem_name("OS_R")) os_rom_bram_inst
 	.q       ( os_rom_dout )
 );
 
-//assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
-assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+//assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
 
 reg os_lsb = 1;
 always @(posedge clk_sys) begin
@@ -1744,7 +1744,8 @@ if (reset) begin
 	ras_latch <= 10'd0;
 	old_cas_n <= 1;
 	dram_addr_old[11] <= 0;
-	bootcopy <= 19'h7FFFF;
+//	bootcopy <= 19'h7FFFF;
+	bootcopy <= 19'h0;
 end
 else begin
 	old_cas_n <= dram_cas_n;
