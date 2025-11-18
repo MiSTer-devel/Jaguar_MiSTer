@@ -22,6 +22,20 @@
 // This module is highly specialized to match Jaguar. 
 // Ch1 is geared for DRAM and requires using ras/cas addresses and refresh commands. Uses BA 0x0X only.
 // Ch2 is geared for ROM and uses BA 0x1X only. Assumes refresh provided by Ch1 or self_refresh on.
+
+//SDRAM
+//-BA 0 and 1 used for DRAM
+//-Original DRAM uses columns A0-A7 and rows A0-A9 x16 = 256 addresses per active and there are 4 chips
+//-SDRAM uses columns SA3-SA10 which map to A0-A7. SA0 is used to switch between 2 chips. BA0 is used to swap the other chips in single RAM. Dual RAM uses the other SDRAM chip.
+
+//-BA 2 and 3 used for ROM and BIOSes
+//-Jag M BIOS (K not supported) is located at Bank 3, max row = 7F-7F, unless 32MB RAM and no cd and cart is >15.875MB
+//-NVROM BIOS is located at Bank 3, max row = 7E-7E
+//-CDROM BIOS is located at Bank 3, max row = 7C-7D
+//-Cart ROM (up to 16MB) is located at Banks 2 and 3, rows = 00-7F,possibly overlapping 78-7F
+//-For 64MB SDRAM, no overlapping as BIOSes are moved higher rows 80 (FC-FF)
+////-NVRAM is located at Bank 3, max row = 7B-7B
+
 module sdram
 (
 	input             init,        // reset to initialize RAM
@@ -55,6 +69,7 @@ module sdram
 	input             ch1_64,
 	
 	input      [23:1] ch2_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
+	input             ch2_addr_ext,// Use top of SDRAM if chip is 64MB (ignored if 32MB)
 	output reg [31:0] ch2_dout,    // data output to cpu
 	input      [15:0] ch2_din,     // data input from cpu
 	input             ch2_req,     // request
@@ -348,7 +363,7 @@ always @(posedge clk) begin
 			end
 			else if(ch2_rq) begin
 //				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch2_add[22:10], 1'b0, ch2_add[9:1]}; // auto precharge
-				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch_temp, ch2_add[19:10], ch2_add[9:1]}; // auto precharge
+				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, ch2_addr_ext, 1'b1, ch_temp, ch2_add[19:10], ch2_add[9:1]}; // auto precharge
 				saved_data <= {ch2_data,ch2_data,ch2_data,ch2_data};
 				saved_wr   <= ch2_wr;
 				saved_mask[3:2] <= ~ch2_be[1:0]; // first write uses [3:2]

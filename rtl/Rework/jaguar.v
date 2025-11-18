@@ -26,6 +26,7 @@ module jaguar
 
 	output      [23:0]  abus_out,      // Main external address bus output, used for OS ROM (BIOS), cart, etc. Lower 3 bits are masked.
 
+	output              os_rom_ce_n,
 	input       [7:0]   os_rom_q,
 
 	output              cart_ce_n,
@@ -136,7 +137,7 @@ assign dram_addr[23:0] = xa_in[23:0];
 assign dram_be[7:0] = we[7:0];
 assign dram_startwep = startwep;
 
-wire os_rom_ce_n;
+//wire os_rom_ce_n;
 wire os_rom_oe_n;
 wire os_rom_oe = (~os_rom_ce_n & ~os_rom_oe_n);	// os_rom_oe feeds back TO the core, to enable the internal drivers.
 
