@@ -494,3 +494,55 @@ sdramclk_ddr
 );
 
 endmodule
+
+module spram_byte_32x15
+(
+	input             clk,
+	input      [15:0] addr,
+	output     [31:0] dout,
+	input      [31:0] din,
+	input      [3:0]  wr
+);
+
+spram #(.addr_width(15), .data_width(8)) dram_bram_inst0
+(
+	.clock   ( clk ),
+
+	.address ( addr[14:0] ),
+	.data    ( din[31:24] ),
+	.wren    ( wr[3] ),
+
+	.q       ( dout[31:24] )
+);
+spram #(.addr_width(15), .data_width(8)) dram_bram_inst1
+(
+	.clock   ( clk ),
+
+	.address ( addr[14:0] ),
+	.data    ( din[23:16] ),
+	.wren    ( wr[2] ),
+
+	.q       ( dout[23:16] )
+);
+spram #(.addr_width(15), .data_width(8)) dram_bram_inst2
+(
+	.clock   ( clk ),
+
+	.address ( addr[14:0] ),
+	.data    ( din[15:8] ),
+	.wren    ( wr[1] ),
+
+	.q       ( dout[15:8] )
+);
+spram #(.addr_width(15), .data_width(8)) dram_bram_inst3
+(
+	.clock   ( clk ),
+
+	.address ( addr[14:0] ),
+	.data    ( din[7:0] ),
+	.wren    ( wr[0] ),
+
+	.q       ( dout[7:0] )
+);
+endmodule
+

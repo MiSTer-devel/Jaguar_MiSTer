@@ -484,6 +484,7 @@ reg [15:0] cd_toc_data;
 reg cd_toc_wr;
 reg [22:20] cart_mask;
 reg found_cd = 0;
+reg bios_overwrote = 0;
 
 always @(posedge clk_sys)
 if (reset && !ioctl_download) begin
@@ -523,6 +524,9 @@ else begin
 			end else if (loader_addr[24:20]==5'h4) begin
 				cart_mask[22:20] = 3'h3; // 4MB
 			end
+		end
+		if (loader_addr[23:0]==24'hFE0000) begin //technically should check next address
+			bios_overwrote <= 1;
 		end
 	end
 
@@ -873,6 +877,7 @@ wire [28:3] premixed_addr = (loader_en) ? cd_index ? sloader_addr[28:3] : boot_a
 wire [28:3] boot_addr;
 assign boot_addr[28:20] = (os_index) ? 9'h1FF : (cdos_index) ? 9'h1FE : 9'h1FC; //nvme_index = default
 //assign boot_addr[28:20] = (os_index) ? 9'h01F : (cdos_index) ? 9'h01E : 9'h01D; //nvme_index = default
+assign boot_addr[19:3] = audbus_out[19:3];
 assign sloader_addr[19:3] = loader_addr[19:3];
 assign DDRAM_ADDR = {3'h1,~premixed_addr[28:23],premixed_addr[22:3]};
 assign DDRAM_RD = (loader_en) ? compare && loader_wr : aud_rd_trig;
@@ -1496,20 +1501,8 @@ wire [7:0] os_rom_din = (!os_lsb) ? ioctl_data[7:0] : ioctl_data[15:8];
 reg os_wren;
 wire [7:0] os_rom_dout;
 
-// Ram for the bios
-spram #(.addr_width(17), .data_width(8), .mem_name("OS_R")) os_rom_bram_inst
-(
-	.clock   ( clk_sys ),
-
-	.address ( os_rom_addr ),
-	.data    ( os_rom_din ),
-	.wren    ( os_wren ),
-
-	.q       ( os_rom_dout )
-);
-
 //assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
-assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : bios_overwrote ? fastram2[8*(3-abus_out[1:0]) +:8] : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
 
 reg os_lsb = 1;
 always @(posedge clk_sys) begin
@@ -1531,7 +1524,17 @@ reg [7:0] cas_latch;
 wire [17:0] sdram_addr;
 assign sdram_addr[17:8] = ras_latch[9:0];
 assign sdram_addr[7:0] = cas_latch[7:0];
-wire use_fastram = (sdram_addr[17:15] == {status[36:34]}) || (sdram_addr[17:15] == ~{status[39:37]}); // 256K = 1/4 of address coverage
+wire [63:32] fastram0;
+wire [63:32] fastram1;
+wire [63:32] fastram2;
+wire cache0 = sdram_addr[17:15] == status[36:34];
+wire cache1 = sdram_addr[17:15] == (status[39:37] ^ 3'b111);
+wire cache2 = sdram_addr[17:15] == (status[36:34] ^ 3'b001);
+wire [3:0] wr0 = {4{fastram_w & cache0}} & ch1_be[7:4];
+wire [3:0] wr1 = {4{fastram_w & cache1}} & ch1_be[7:4];
+wire [3:0] wr2 = {4{fastram_w & cache2}} & ch1_be[7:4];
+assign fastram[63:32] = cache1 ? fastram1[63:32] : cache2 ? fastram2[63:32] : fastram0[63:32];
+wire use_fastram = (cache0 || cache1 || cache2); // 256K = 1/4 of address coverage
 wire [63:32] fastram;
 reg fastram_w;
 reg old_ch1_reqw;
@@ -1546,49 +1549,57 @@ begin
 	if (old_ch1_reqw && use_fastram)
 		fastram_w <= 1;
 end
-spram #(.addr_width(16), .data_width(8)) dram_bram_inst0
+
+spram_byte_32x15 fastcache0
+(
+	.clk   ( clk_sys ),
+	.addr  ( sdram_addr[14:0] ),
+	.din   ( ch1_din[63:32] ),
+	.wr    ( wr0 ),
+	.dout  ( fastram0[63:32] )
+);
+
+spram_byte_32x15 fastcache1
+(
+	.clk   ( clk_sys ),
+	.addr  ( sdram_addr[14:0] ),
+	.din   ( ch1_din[63:32] ),
+	.wr    ( wr1 ),
+	.dout  ( fastram1[63:32] )
+);
+
+spram_byte_32x15 fastcache2
+(
+	.clk   ( clk_sys ),
+	.addr  ( use_fastram ? sdram_addr[14:0] : os_rom_addr[16:2]),
+	.din   ( use_fastram ? ch1_din[63:32] : {4{os_rom_din[7:0]}} ),
+	.wr    ( use_fastram ? wr2 : os_wren ? (4'h1 << os_rom_addr[1:0]) : 4'b0),
+	.dout  ( fastram2[63:32] )
+);
+// Ram for the bios
+/*spram #(.addr_width(17), .data_width(8), .mem_name("OS_R")) os_rom_bram_inst
 (
 	.clock   ( clk_sys ),
 
-	.address ( sdram_addr[15:0] ),
-	.data    ( ch1_din[63:56] ),
-	.wren    ( fastram_w && ch1_be[7] ),
+	.address ( os_rom_addr ),
+	.data    ( os_rom_din ),
+	.wren    ( os_wren ),
 
-	.q       ( fastram[63:56] )
+	.q       ( os_rom_dout )
 );
-spram #(.addr_width(16), .data_width(8)) dram_bram_inst1
-(
-	.clock   ( clk_sys ),
-
-	.address ( sdram_addr[15:0] ),
-	.data    ( ch1_din[55:48] ),
-	.wren    ( fastram_w && ch1_be[6] ),
-
-	.q       ( fastram[55:48] )
-);
-spram #(.addr_width(16), .data_width(8)) dram_bram_inst2
-(
-	.clock   ( clk_sys ),
-
-	.address ( sdram_addr[15:0] ),
-	.data    ( ch1_din[47:40] ),
-	.wren    ( fastram_w && ch1_be[5] ),
-
-	.q       ( fastram[47:40] )
-);
-spram #(.addr_width(16), .data_width(8)) dram_bram_inst3
-(
-	.clock   ( clk_sys ),
-
-	.address ( sdram_addr[15:0] ),
-	.data    ( ch1_din[39:32] ),
-	.wren    ( fastram_w && ch1_be[4] ),
-
-	.q       ( fastram[39:32] )
-);
+*/
 `else
 wire use_fastram = 0;
 wire [63:32] fastram = 0;
+wire [63:32] fastram2;
+spram_byte_32x15 fastcache2
+(
+	.clk   ( clk_sys ),
+	.addr  ( os_rom_addr[16:2]),
+	.din   ( {4{os_rom_din[7:0]}} ),
+	.wr    ( os_wren ? (4'h1 << os_rom_addr[1:0]) : 4'b0),
+	.dout  ( fastram2[63:32] )
+);
 `endif
 
 wire memtrack = status[56];

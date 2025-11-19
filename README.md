@@ -69,7 +69,7 @@ Remaining tasks (No guarantees to complete)
 - Weird timing display in VLM. Drops digits
 - CD-G support
 - DSP sometimes does not come up correctly even after reboot
-- Quality of life improvements like boot rom loading of CD BIOS (and memory track ROM)
+- Quality of life improvements
 - Other CD formats beside cdi (cue/bin, chd - not sure if this is possible as it requires multi-session)
 - Single RAM improvement? Not sure if further improvement possible
 - Re-add turbo support? Not sure if possible with nuked 68k
