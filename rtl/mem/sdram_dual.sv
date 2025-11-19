@@ -159,6 +159,7 @@ always @(posedge clk) begin
 	
 	reg [15:0] ch2_data;
 	reg [23:1] ch2_add;
+	reg        ch2_add_ext;
 	reg        ch2_wr;
 
 	reg [31:0] ch3_data;
@@ -199,12 +200,13 @@ always @(posedge clk) begin
 	SDRAM_DQ <= 16'bZ;
 	
 	if (ch2_req) begin
-		ch2_rq  <= 1;
-		ch2_data  <= ch2_din;
-		ch2_add   <= ch2_addr;
-		ch2_wr    <= !ch2_rnw;
-		ch2_ready <= 0;
-		ch_temp   <= ch_tmp;
+		ch2_rq      <= 1;
+		ch2_data    <= ch2_din;
+		ch2_add     <= ch2_addr;
+		ch2_add_ext <= ch2_addr_ext;
+		ch2_wr      <= !ch2_rnw;
+		ch2_ready   <= 0;
+		ch_temp     <= ch_tmp;
 	end
 	if (ch1_reqr) begin
 		saved_addr <= ch1_addr;
@@ -363,7 +365,7 @@ always @(posedge clk) begin
 			end
 			else if(ch2_rq) begin
 //				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, 1'b0, 1'b1, ch2_add[22:10], 1'b0, ch2_add[9:1]}; // auto precharge
-				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, ch2_addr_ext, 1'b1, ch_temp, ch2_add[19:10], ch2_add[9:1]}; // auto precharge
+				{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b1, ch2_add_ext, 1'b1, ch_temp, ch2_add[19:10], ch2_add[9:1]}; // auto precharge
 				saved_data <= {ch2_data,ch2_data,ch2_data,ch2_data};
 				saved_wr   <= ch2_wr;
 				saved_mask[3:2] <= ~ch2_be[1:0]; // first write uses [3:2]

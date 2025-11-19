@@ -1508,8 +1508,8 @@ spram #(.addr_width(17), .data_width(8), .mem_name("OS_R")) os_rom_bram_inst
 	.q       ( os_rom_dout )
 );
 
-assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
-//assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+//assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
 
 reg os_lsb = 1;
 always @(posedge clk_sys) begin
