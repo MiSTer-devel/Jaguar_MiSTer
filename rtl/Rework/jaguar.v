@@ -1375,6 +1375,8 @@ flipflop xbgl_ff
 assign fx68k_clk = turbo ? (ce_26_6_p1 | ce_26_6_p2) : j_xcpuclk;
 assign m68k_clk = fx68k_clk;
 
+`define ACCURATE_CPU
+`ifdef ACCURATE_CPU
 m68kcpu m68k_inst
 (
 	.MCLK         (sys_clk),
@@ -1405,7 +1407,7 @@ m68kcpu m68k_inst
 	.UDS          (fx68k_uds_n),
 	.strobe_z     ()
 );
-
+`endif
 assign m68k_addr = fx68k_address;
 assign m68k_bus_do = fx68k_din;
 
@@ -1417,7 +1419,15 @@ assign m68k_bus_do = fx68k_din;
 // 68000: 2679   GPU Internal: 12865   GPU External: 13452
 // Mister NTSC:
 // 68000: 2168   GPU Internal: 10819   GPU External: 1138
-/*
+
+`ifndef ACCURATE_CPU
+assign fx68k_reset_pull = 1'b1;
+wire fx68k_phi1 = xvclk & (~j_xcpuclk || turbo);
+wire fx68k_phi2 = tlw & (j_xcpuclk || turbo);
+
+always @(posedge sys_clk) begin
+//	old_j_xcpuclk <= j_xcpuclk;
+end
 fx68k fx68k_inst
 (
 	.clk            (sys_clk),         // input system clock
@@ -1450,7 +1460,8 @@ fx68k fx68k_inst
 	.oEdb           (fx68k_dout),      // output
 	.eab            (fx68k_address)    // output
 );
-*/
+`endif
+
 // VIDEO / 15 KHz (native) output...
 assign vga_r = xr[7:0];
 assign vga_g = xg[7:0];

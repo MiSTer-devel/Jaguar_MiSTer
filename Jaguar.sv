@@ -526,7 +526,7 @@ else begin
 			end
 		end
 		if (loader_addr[23:0]==24'hFE0000) begin //technically should check next address
-			bios_overwrote <= 1;
+//			bios_overwrote <= 1;
 		end
 	end
 
@@ -1435,6 +1435,7 @@ reg cart_diff;
 //32'h00000000; // 8 bit
 reg [1:0] cart_b = 0;
 reg [1:0] bios_b = 0;
+reg [1:0] nvme_b = 0;
 reg [1:0] addr_b = 0;
 always @(posedge clk_sys)
 begin
@@ -1469,11 +1470,25 @@ begin
 			bios_b[1:0] <= 2'b10;
 		else
 			bios_b[1:0] <= 2'b00;
+	if (loader_addr[23:1]==22'h000200 && loader_en && loader_wr && nvme_index)
+		if (loader_data_bs[15:0]==16'h0202)
+			nvme_b[1:0] <= 2'b01;
+		else if (loader_data_bs[15:0]==16'h0000)
+			nvme_b[1:0] <= 2'b10;
+		else
+			nvme_b[1:0] <= 2'b00;
+	if (loader_addr[23:1]==22'h000201 && loader_en && loader_wr && nvme_index)
+		if (loader_data_bs[15:0]==16'h0202 && nvme_b[1:0]==2'b01)
+			nvme_b[1:0] <= 2'b01;
+		else if (loader_data_bs[15:0]==16'h0000 && nvme_b[1:0]==2'b10)
+			nvme_b[1:0] <= 2'b10;
+		else
+			nvme_b[1:0] <= 2'b00;
 end
 
 wire [23:0] addr_ch3;
 wire [3:0] use_b;
-assign use_b[3:2] = override ? bios_b : cart_b;
+assign use_b[3:2] = override ? bios_b : memtrack ? nvme_b : cart_b;
 assign use_b[1:0] = addr_b;
 assign cart_q[31:16] = cart_qs[31:16];
 assign cart_q[15:8] = (use_b[2] && ~use_b[1]) ? cart_qs[31:24] : cart_qs[15:8]; // 16bit high or default
@@ -1495,6 +1510,8 @@ assign cart_q[7:0] = (use_b==4'b1000) ? cart_qs[31:24] // 8 bit
 //wire os_rom_oe = (~os_rom_ce_n & ~os_rom_oe_n);	// os_rom_oe feeds back TO the core, to enable the internal drivers.
 
 wire [16:0] os_rom_addr = (os_download) ? {ioctl_addr[16:1],os_lsb} : abus_out[16:0];
+//wire [16:0] os_rom_addr = (nvme_download) ? {ioctl_addr[16:1],os_lsb} : o_abus_out[16:0];
+reg [16:0] o_abus_out;
 
 wire [7:0] os_rom_din = (!os_lsb) ? ioctl_data[7:0] : ioctl_data[15:8];
 
@@ -1509,6 +1526,7 @@ always @(posedge clk_sys) begin
 	os_wren <= 1'b0;
 
 	if (os_download && ioctl_wr) begin
+//	if (nvme_download && ioctl_wr) begin
 		os_wren <= 1'b1;
 		os_lsb <= 1'b0;
 	end
@@ -1516,6 +1534,9 @@ always @(posedge clk_sys) begin
 		os_wren <= 1'b1;
 		os_lsb <= 1'b1;
 	end
+	if (abus_out[23:20]==4'h8) begin
+		o_abus_out[16:0] <= abus_out[16:0];
+ end
 end
 
 //`define FAST_SDRAM
@@ -1604,7 +1625,8 @@ spram_byte_32x15 fastcache2
 
 wire memtrack = status[56];
 wire memtrack_wr = memtrack && ram_write_req;
-wire memtrack_wrram = memtrack_wr && abus_out[23:20]==4'h9;
+wire memtrack_ram = memtrack && abus_out[23:20]==4'h9;
+wire memtrack_wrram = memtrack_wr && memtrack_ram;
 //wire memtrack_wro0 = memtrack_wr && abus_out[23:0]==24'h815554;
 wire memtrack_wro1 = memtrack_wr && abus_out[23:0]==24'h80AAA8;
 wire memtrack_rdo1 = memtrack && !ram_write_req && abus_out[23:0]==24'h80AAA8 && memtrack_override1;
@@ -1641,7 +1663,9 @@ begin
 	end
 	old_memtrack_wrram <= memtrack_wrram;
 end
-wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : cart_qsc;
+//wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : cart_qsc;
+//wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : (!os_rd_trig && !override && memtrack && !memtrack_ram) ? {fastram2[39:32],fastram2[47:40],fastram2[55:48],fastram2[63:56]} : cart_qsc;
+wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : (!os_rd_trig && !override && memtrack && !memtrack_ram) ? {cart_qsc[31:24],cart_qsc[23:16],cart_qsc[15:8],cart_qsc[7:0]} : cart_qsc;
 wire [31:0] cart_qsc;
 sdram sdram
 (
@@ -1676,7 +1700,7 @@ sdram sdram
 	.ch1_ready          (ch1a_ready),
 	.ch1_64             (ch1_64),
 
-	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (os_index ? 23'h7F0000 : cdos_index ? 23'h7C0000 : nvme_index ? 23'h7E0000 : 23'h000000) : {1'b0,abus_out[22:20] & cart_mask[22:20],abus_out[19:2],memtrack_wr?abus_out[1]:1'b0} | (os_rd_trig ? 23'h7F0000 : override ? 23'h7C0000 : memtrack ? 23'h7E0000: 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h7E0000=24'hFC0000
+	.ch2_addr           ((loader_en) ? loader_addr[23:1]  | (os_index ? 23'h7F0000 : cdos_index ? 23'h7C0000 : nvme_index ? 23'h7E0000 : 23'h000000) : {1'b0,abus_out[22:20] & cart_mask[22:20],abus_out[19:2],memtrack_wr?abus_out[1]:1'b0} | (os_rd_trig ? 23'h7F0000 : override ? 23'h7C0000 : memtrack_ram ? 23'h7B0000 : memtrack ? 23'h7E0000: 23'h000000)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h7E0000=24'hFC0000
 	.ch2_addr_ext       ((loader_en) ? (os_index | cdos_index | nvme_index) : (os_rd_trig | override | memtrack)),    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations. 23'h7E0000=24'hFC0000
 	.ch2_dout           (cart_qsc),            // data output to cpu
 	.ch2_din            ((loader_en) ? loader_data_bs : dram_d[15:0]),     // data input from cpu
@@ -1744,7 +1768,7 @@ sdram sdram2
 	.ch3_rnw            (1'b1),     // 1 - read, 0 - write
 	.ch3_ready          (),
 
-	.self_refresh       (loader_en)
+	.self_refresh       (loader_en || !xresetlp)
 );
 `endif
 

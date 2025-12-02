@@ -302,7 +302,7 @@ assign hackbus = 1'b0;//cd_en && aud_sess && (ain[23:8]==16'h002C) && hackwait;
 assign hackbus1 = dohacks && cd_en && aud_sess && (({ain[23:2],2'b00}==24'h050DF4)) && hackwait;
 assign hackbus2 = 1'b0;//cd_en && aud_sess && (({ain[23:1],1'b0}==24'h050EC0)) && hackwait;
 assign override = cdbios && cd_en;
-assign doe = cd_en && oet && (breg || (!cdbios && caddr));
+assign doe = cd_en && oet && (breg);// || (!cdbios && caddr)); // not sure how mirroring applies or if reading is sometimes disabled - probably disabled when cdbios is disabled to allow cart pass through for >=4MB
 assign dout[31:0] = (aeven) ? dout_t[31:0] : {dout_t[15:0],dout_t[15:0]};
 wire [31:0] dout_t = doe_ds ? ds_resp[ds_resp_idx] : doe_sub ? {subresp,subresp} : doe_fif ? cur_i2s_fifo : butch_reg[ain[5:2]];
 wire aeven = (ain[1]==1'b0); //even is high [31:16]
