@@ -29,7 +29,7 @@ module _butch
 	output aud_ce,
 	input  audwaitl,
 	input  aud_cbusy,
-	input [8:0] toc_addr,
+	input [9:0] toc_addr,
 	input [15:0] toc_data,
 	input toc_wr,
 	input maxc,
@@ -343,9 +343,9 @@ wire [6:0] num_tracks = cue_tracks[6:0];
 // 265909/(358.2*8) = 9.279 cycles/bit
 // 746.9MB = 317560 frames = 70.57 minutes max
 // 24'h1AF05E = which pattern 0-9
-wire [6:0] frames_end = cuest[num_tracks[2:0]+3'h1][6:0];    // 0-74 // (msf % 75)
-wire [5:0] seconds_end = cuest[num_tracks[2:0]+3'h1][13:8];  // 0-59 // (msf / 75) % 60
-wire [6:0] minutes_end = cuest[num_tracks[2:0]+3'h1][22:16]; // 0-99 // (msf / 75) / 60
+//wire [6:0] frames_end = cuest[num_tracks[2:0]+3'h1][6:0];    // 0-74 // (msf % 75)
+//wire [5:0] seconds_end = cuest[num_tracks[2:0]+3'h1][13:8];  // 0-59 // (msf / 75) % 60
+//wire [6:0] minutes_end = cuest[num_tracks[2:0]+3'h1][22:16]; // 0-99 // (msf / 75) / 60
 reg [9:0] cur_samples;  // 0-587
 reg [6:0] cur_frames;   // 0-74 // (msf % 75)
 reg [5:0] cur_seconds;  // 0-59 // (msf / 75) % 60
@@ -454,11 +454,14 @@ reg cues_wrr;
 reg cuep_wrr;
 reg cuel_wrr;
 reg cuet_wrr;
+reg cues_wrr_next;
+reg cuep_wrr_next;
+reg cuel_wrr_next;
+reg cuet_wrr_next;
 assign cues_wr = cues_wrr;
 assign cuep_wr = cuep_wrr;
 assign cuel_wr = cuel_wrr;
 assign cuet_wr = cuet_wrr;
-reg [7:0] resetstate;
 
 //`define ULS_REBOOT
 // Klax, Tetris
@@ -492,7 +495,8 @@ initial begin
 	cuestop[1'h0] <= 24'h003A28; //
 	cuestop[1'h1] <= 24'h04022C; //
 end
-// These are redundant with RAMs. Was implemented this way first then, intended to move to ram blocks. Remove when transition complete.
+// These are redundant with RAMs. Was implemented this way first then, intended to move to ram blocks. No longer needed - convert defaults to mif for BRAMs?
+/*
 reg [31:0] cuett [0:63];
 integer k;
 initial begin
@@ -550,6 +554,7 @@ initial begin
 	cuelt[k] <= 24'h000000;
  end
 end
+*/
 
 // CRC calculator
 always @(posedge sys_clk)
@@ -643,7 +648,6 @@ begin
 		butch_reg[11] <= 0;
 		add_ch3[23:0] <= 24'h543210;
 		max_ch3[23:0] <= 24'h543210;
-		resetstate <= 8'hFF;
 		seek <= 8'h0;
 		i2s_rfifopos <= 5'h0;
 		i2s_wfifopos <= 5'h0;
@@ -656,20 +660,30 @@ begin
 	if (!cdbios)
 		pastcdbios <= 1'b1;
 
+	cues_wrr_next <= 0;
+	cuep_wrr_next <= 0;
+	cuel_wrr_next <= 0;
+	cuet_wrr_next <= 0;
+	cues_wrr <= cues_wrr_next;
+	cuep_wrr <= cuep_wrr_next;
+	cuel_wrr <= cuel_wrr_next;
+	cuet_wrr <= cuet_wrr_next;
 	if (toc_wr) begin
+		cues_addr <= {toc_addr[9:3]};
+		cuet_addr <= {toc_addr[9:3]};
 		if (toc_addr[2:0] == 3'h0) begin
-			cuest[toc_addr[8:3]][23:8] <= toc_data[15:0];
+			cues_dinv[23:8] <= toc_data[15:0];
 			cueptemp[23:8] <= toc_data[15:0];
-			//cuept[toc_addr[8:3]][23:8] <= toc_data[15:0];
 		end
 		if (toc_addr[2:0] == 3'h1) begin
-			cuest[toc_addr[8:3]][7:0] <= toc_data[15:8];
+			cues_dinv[7:0] <= toc_data[15:8];
 			cueptemp[7:0] <= toc_data[15:8];
-			//cuept[toc_addr[8:3]][7:0] <= toc_data[15:8];
-			cuelt[toc_addr[8:3]][23:16] <= toc_data[7:0];
+			cuel_dinv[23:16] <= toc_data[7:0];
+			cues_wrr_next <= 1;
 		end
 		if (toc_addr[2:0] == 3'h2) begin
-			cuelt[toc_addr[8:3]][15:0] <= toc_data[15:0];
+			cuel_dinv[15:0] <= toc_data[15:0];
+			cuel_wrr_next <= 1;
 		end
 		if (toc_addr[2:0] == 3'h3) begin
 			//cue_gap[15:0] <= toc_data[15:0]; // logic below assumes gap is not larger than 2 seconds
@@ -677,20 +691,20 @@ begin
 			cueptemp[14:8] <= cueptemp[14:8] - toc_data[14:8];
 		end
 		if (toc_addr[2:0] == 3'h4) begin
-			cuett[toc_addr[8:3]][31:24] <= toc_data[7:0];
+			cuet_dinv[31:24] <= toc_data[7:0];
 			tocsess1 <= 1;
 			if (toc_data[15:9] == 0) begin //session 1 == (0 or 1)
-				aud_tracks <= toc_addr[8:3];
+				aud_tracks <= toc_addr[9:3];
 				tocsess1 <= 0;
 			end
-			cue_tracks <= toc_addr[8:3];
+			cue_tracks <= toc_addr[9:3];
 			if (cueptemp[7]) begin
 				cueptemp[7:0] <= cueptemp[7:0] + 8'h4B;
 				cueptemp[14:8] <= cueptemp[14:8] - (7'h1);
 			end
 		end
 		if (toc_addr[2:0] == 3'h5) begin
-			cuett[toc_addr[8:3]][23:8] <= toc_data[15:0];
+			cuet_dinv[23:8] <= toc_data[15:0];
 			dat_tracks <= cue_tracks - aud_tracks;
 			dat_track <= aud_tracks + 4'h1;
 			if (cueptemp[14]) begin
@@ -699,9 +713,11 @@ begin
 			end
 		end
 		if (toc_addr[2:0] == 3'h6) begin
-			cuett[toc_addr[8:3]][7:0] <= toc_data[15:8];
-			cuept[toc_addr[8:3]][23:0] <= cueptemp[23:0];
 			cuestoptemp[23:16] <= toc_data[7:0];
+			cuet_dinv[7:0] <= toc_data[15:8];
+			cuep_dinv <= cueptemp;
+			cuet_wrr_next <= 1;
+			cuep_wrr_next <= 1;
 		end
 		if (toc_addr[2:0] == 3'h7) begin
 			if (cuestoptemp[23:16] != 0 || toc_data[15:0] != 0) begin
@@ -709,26 +725,6 @@ begin
 				cuestop[tocsess1][15:0] <= toc_data[15:0];
 			end
 		end
-	end
-	cues_wrr <= 0;
-	cuep_wrr <= 0;
-	cuel_wrr <= 0;
-	cuet_wrr <= 0;
-	if ((resetstate[7] != 1'b0) && resetl) begin // should be enough time to set these before BIOS asks for them
-		resetstate <= resetstate - 8'h1;
-		cues_addr <= {1'h0,resetstate[6:1]};
-		cuet_addr <= {1'h0,resetstate[6:1]};
-		cues_dinv <= (resetstate[6:1] > cue_tracks) ? cuestop[1'b1] : cuest[resetstate[6:1]];
-		cuep_dinv <= (resetstate[6:1] > cue_tracks) ? cuestop[1'b1] : cuept[resetstate[6:1]];
-		cuel_dinv <= (resetstate[6:1] > cue_tracks) ? 24'h0 : cuelt[resetstate[6:1]];
-		cuet_dinv <= (resetstate[6:1] > cue_tracks) ? 32'h0 : cuett[resetstate[6:1]];
-		cues_wrr <= !resetstate[0];
-		cuep_wrr <= !resetstate[0];
-		cuel_wrr <= !resetstate[0];
-		cuet_wrr <= !resetstate[0];
-	end
-	if (resetstate == 8'h0F) begin
-		resetstate <= 8'h0;
 	end
 	if (updabs) begin
 		updabs <= 1'b0;
@@ -1567,8 +1563,9 @@ end
 
 wire [6:0] cuet_add;
 wire [31:0] cuet_din;
-wire [31:0] cuet_dout;
+wire [31:0] cuet_doutt;
 wire cuet_wr;
+wire [31:0] cuet_dout = (cuet_add > cue_tracks) ? 32'h0 : cuet_doutt;
 spram #(.addr_width(7), .data_width(32)) cuet_bram_inst
 (
 	.clock   ( sys_clk ),
@@ -1577,14 +1574,15 @@ spram #(.addr_width(7), .data_width(32)) cuet_bram_inst
 	.data    ( cuet_din ),
 	.wren    ( cuet_wr ),
 
-	.q       ( cuet_dout )
+	.q       ( cuet_doutt )
 );
 //track aud_track_offset
 
 wire [6:0] cues_add;
 wire [23:0] cues_din;
-wire [23:0] cues_dout;
+wire [23:0] cues_doutt;
 wire cues_wr;
+wire [23:0] cues_dout = (cues_add > cue_tracks) ? cuestop[1'b1] : cues_doutt;
 spram #(.addr_width(7), .data_width(24)) cues_bram_inst
 (
 	.clock   ( sys_clk ),
@@ -1593,14 +1591,15 @@ spram #(.addr_width(7), .data_width(24)) cues_bram_inst
 	.data    ( cues_din ),
 	.wren    ( cues_wr ),
 
-	.q       ( cues_dout )
+	.q       ( cues_doutt )
 );
 //mmssff start
 
 wire [6:0] cuep_add;
 wire [23:0] cuep_din;
-wire [23:0] cuep_dout;
+wire [23:0] cuep_doutt;
 wire cuep_wr;
+wire [23:0] cuep_dout = (cuep_add > cue_tracks) ? cuestop[1'b1] : cuep_doutt;
 spram #(.addr_width(7), .data_width(24)) cuep_bram_inst
 (
 	.clock   ( sys_clk ),
@@ -1609,17 +1608,18 @@ spram #(.addr_width(7), .data_width(24)) cuep_bram_inst
 	.data    ( cuep_din ),
 	.wren    ( cuep_wr ),
 
-	.q       ( cuep_dout )
+	.q       ( cuep_doutt )
 );
 //mmssff pregap
 
 wire [6:0] cuel_add;
 wire [23:0] cuel_din;
-wire [23:0] cuel_dout;
+wire [23:0] cuel_doutt;
 wire carryf = cuel_dout[6:0]==7'h00;
 wire carrys = cuel_dout[13:0]==14'h00;
 reg [23:0] cuelast;// = {carrys?cuel_dout[23:16]-8'h1:cuel_dout[23:16],carrys?8'h3B:carryf?cuel_dout[15:8]-8'h1:cuel_dout[15:8],carryf?8'h4A:cuel_dout[7:0]-8'h1};
 wire cuel_wr;
+wire [23:0] cuel_dout = (cuel_add > cue_tracks) ? 24'h0 : cuel_doutt;
 spram #(.addr_width(7), .data_width(24)) cuel_bram_inst
 (
 	.clock   ( sys_clk ),
@@ -1628,7 +1628,7 @@ spram #(.addr_width(7), .data_width(24)) cuel_bram_inst
 	.data    ( cuel_din ),
 	.wren    ( cuel_wr ),
 
-	.q       ( cuel_dout )
+	.q       ( cuel_doutt )
 );
 //mmssff length
 

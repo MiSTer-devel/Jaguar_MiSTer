@@ -475,10 +475,10 @@ wire cd_wrack = !cd_wait;	// TESTING!!
 reg cd_wait;
 wire cd_index = ioctl_index[3] == 1'b1; // 8-15
 //wire cd_download = ioctl_download && cd_index;
-wire [8:0] toc_addr = cd_init ? loader_addr[9:1] : cd_toc_addr;
+wire [9:0] toc_addr = cd_init ? loader_addr[10:1] : cd_toc_addr;
 wire [15:0] toc_data = cd_init ? loader_data_bs : cd_toc_data;
 wire toc_wr = cd_init ? cue_download && loader_wr : cd_toc_wr;
-wire [8:0] cd_toc_addr = {cd_track[5:0],cd_toc_type[2:0]};
+wire [9:0] cd_toc_addr = {cd_track[6:0],cd_toc_type[2:0]};
 reg [2:0] cd_toc_type;
 reg [15:0] cd_toc_data;
 reg cd_toc_wr;

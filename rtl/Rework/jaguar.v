@@ -81,7 +81,7 @@ module jaguar
 	input maxc,
 	input auto_eeprom,
 	output [23:0] addr_ch3,
-	input [8:0] toc_addr,
+	input [9:0] toc_addr,
 	input [15:0] toc_data,
 	input toc_wr,
 
