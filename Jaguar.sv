@@ -1437,10 +1437,18 @@ reg [1:0] cart_b = 0;
 reg [1:0] bios_b = 0;
 reg [1:0] nvme_b = 0;
 reg [1:0] addr_b = 0;
+reg bios_m = 0;
 always @(posedge clk_sys)
 begin
 	if (cart_rd_trig)
 			addr_b[1:0] <= abus_out[1:0];
+
+	if (loader_addr[23:1]==22'h0009B7 && loader_en && loader_wr && os_index) //136e/2=9b7
+		if (loader_data_bs[15:8]==8'h67)
+			bios_m <= 1'b0;
+	if (loader_addr[23:1]==22'h000CE3 && loader_en && loader_wr && os_index) //19c6/2=ce3
+		if (loader_data_bs[15:8]==8'h67)
+			bios_m <= 1'b1;
 
 	if (loader_addr[23:1]==22'h000200 && loader_en && loader_wr && cart_index)
 		if (loader_data_bs[15:0]==16'h0202)
@@ -1519,7 +1527,10 @@ reg os_wren;
 wire [7:0] os_rom_dout;
 
 //assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : os_rom_dout; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
-assign os_rom_q = (abus_out[16:0]==17'h0136E && status[2]) ? 8'h60 : bios_overwrote ? fastram2[8*(3-abus_out[1:0]) +:8] : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+assign os_rom_q = (((abus_out[16:0]==17'h0136E && !bios_m) || (abus_out[16:0]==17'h019C6 && bios_m)) && status[2]) ? 8'h60 : bios_overwrote ? fastram2[8*(3-abus_out[1:0]) +:8] : cart_qsc[8*(3-abus_out[1:0]) +:8]; // Patch the BEQ instruction to a BRA, to skip the cart checksum fail.
+// kbios 136e
+// mbios 19c6
+// 67->60 = beq->bra
 
 reg os_lsb = 1;
 always @(posedge clk_sys) begin
@@ -2070,3 +2081,4 @@ CODES #(.ADDR_WIDTH(24), .DATA_WIDTH(16), .BIG_ENDIAN(1)) codes_68k
 );
 
 endmodule
+
