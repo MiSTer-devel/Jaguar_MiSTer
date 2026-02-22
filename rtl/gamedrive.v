@@ -1,0 +1,198 @@
+module gamedrive_emu_full (
+	input  wire        clk,
+	input  wire        rst_n,
+	input  wire        enable,
+
+	// Simple CPU bus (adapt to your Jaguar bus wrapper)
+	input  wire        cs,
+	input  wire        rd,
+	input  wire        wr,
+	input  wire [23:0] addr,
+	input  wire [15:0] wdata,
+	output reg  [15:0] rdata,
+	output wire        oe
+);
+
+	localparam [23:0] ADDR_CMD   = 24'hF16002;
+	localparam [23:0] ADDR_DATA  = 24'hF16004;
+	localparam [23:0] ADDR_DATA8 = 24'hF16005;
+
+	localparam integer BLOB_BYTES = 16'h0100;
+
+	wire in_range = (addr == ADDR_CMD) | (addr == ADDR_DATA) | (addr == ADDR_DATA8);
+
+	assign oe = in_range & enable & rd;
+
+	// Status bits consumed by RAPTOR_GD_Init:
+	// CMD[15] busy: keep low for no-wait behavior
+	// CMD[5]  pre-transfer wait: keep low
+	// CMD[3]  sync bit: toggled by writes 0x10/0x11
+	reg sync_bit3;
+	wire [15:0] cmd_status = {1'b0, 9'b0, 1'b0, 1'b0, sync_bit3, 3'b000};
+
+	// XFER16 emulation state used during the pre-download handshake.
+	reg        xfer_active;
+	reg        xfer_phase;     // 0 -> return high byte, 1 -> return low byte
+	reg [15:0] xfer_word;
+	reg [3:0]  xfer_idx;
+
+	// Blob streaming mode (entered after length xfer completes).
+	reg        download_mode;
+	reg [15:0] download_ptr;
+
+	// The blob seems to be a function pointer table. The first word is checked to be non-zero by the
+	// init code, and will seemingly fail if it is. The next word is the number of functions represented in the table,
+	// and then after that are function pointers.
+
+	// Blob from bigpemu, size 0x100. Seems like with word 0 being zero it will fail init?
+	localparam [BLOB_BYTES*8-1:0] BLOB_PACKED = {
+		8'h00, 8'h00, 8'h00, 8'h1b, 8'h00, 8'h4a, 8'h00, 8'h01, 8'h00, 8'h4a, 8'h00, 8'h02, 8'h00, 8'h4a, 8'h00, 8'h03,
+		8'h00, 8'h4a, 8'h00, 8'h04, 8'h00, 8'h4a, 8'h00, 8'h05, 8'h00, 8'h4a, 8'h00, 8'h06, 8'h00, 8'h4a, 8'h00, 8'h07,
+		8'h00, 8'h4a, 8'h00, 8'h08, 8'h00, 8'h4a, 8'h00, 8'h09, 8'h00, 8'h4a, 8'h00, 8'h0a, 8'h00, 8'h4a, 8'h00, 8'h0b,
+		8'h00, 8'h4a, 8'h00, 8'h0c, 8'h00, 8'h4a, 8'h00, 8'h0d, 8'h00, 8'h4a, 8'h00, 8'h0e, 8'h00, 8'h4a, 8'h00, 8'h0f,
+		8'h00, 8'h4a, 8'h00, 8'h10, 8'h00, 8'h4a, 8'h00, 8'h11, 8'h00, 8'h4a, 8'h00, 8'h12, 8'h00, 8'h4a, 8'h00, 8'h13,
+		8'h00, 8'h4a, 8'h00, 8'h14, 8'h00, 8'h4a, 8'h00, 8'h15, 8'h00, 8'h4a, 8'h00, 8'h16, 8'h00, 8'h4a, 8'h00, 8'h17,
+		8'h00, 8'h4a, 8'h00, 8'h18, 8'h00, 8'h4a, 8'h00, 8'h19, 8'h00, 8'h4a, 8'h00, 8'h1a, 8'h00, 8'h4a, 8'h00, 8'h1b,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+		8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00
+	};
+
+	// Dummy executable blob served by this device during init download.
+	// Size 0x180
+	// localparam [BLOB_BYTES*8-1:0] BLOB_PACKED = {
+	// 	8'h01, 8'h00, 8'h00, 8'h1a, 8'h4e, 8'h71, 8'h4e, 8'h71, 8'h4e, 8'h71, 8'h4e, 8'h71, 8'h60, 8'h00, 8'h00, 8'h82,
+	// 	8'h60, 8'h00, 8'h00, 8'h86, 8'h60, 8'h00, 8'h00, 8'h8a, 8'h60, 8'h00, 8'h00, 8'h8e, 8'h60, 8'h00, 8'h00, 8'h92,
+	// 	8'h60, 8'h00, 8'h00, 8'h96, 8'h60, 8'h00, 8'h00, 8'h9a, 8'h60, 8'h00, 8'h00, 8'h9e, 8'h60, 8'h00, 8'h00, 8'ha2,
+	// 	8'h60, 8'h00, 8'h00, 8'ha6, 8'h60, 8'h00, 8'h00, 8'haa, 8'h60, 8'h00, 8'h00, 8'hae, 8'h60, 8'h00, 8'h00, 8'hb2,
+	// 	8'h60, 8'h00, 8'h00, 8'hb6, 8'h60, 8'h00, 8'h00, 8'hba, 8'h60, 8'h00, 8'h00, 8'hbe, 8'h60, 8'h00, 8'h00, 8'hc2,
+	// 	8'h60, 8'h00, 8'h00, 8'hc6, 8'h60, 8'h00, 8'h00, 8'hca, 8'h60, 8'h00, 8'h00, 8'hce, 8'h60, 8'h00, 8'h00, 8'hd2,
+	// 	8'h60, 8'h00, 8'h00, 8'hd6, 8'h60, 8'h00, 8'h00, 8'hda, 8'h60, 8'h00, 8'h00, 8'hde, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h20, 8'h3c, 8'h06, 8'h66, 8'h00, 8'h00, 8'h4e, 8'h75, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h70, 8'h01, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h70, 8'h01, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h20, 8'h01, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h20, 8'h01, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h20, 8'h3c, 8'h00, 8'h00, 8'h01, 8'h80, 8'h4e, 8'h75,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h70, 8'h01, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h33, 8'hc0, 8'h00, 8'h02, 8'h5d, 8'h6e, 8'h42, 8'h80, 8'h42, 8'h80, 8'h4e, 8'h75, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00,
+	// 	8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00
+	// };
+
+	function [7:0] blob_byte_at;
+		input [15:0] idx;
+		begin
+			// Index 0 corresponds to first downloaded byte.
+			blob_byte_at = BLOB_PACKED[((BLOB_BYTES - 1 - idx) * 8) +: 8];
+		end
+	endfunction
+
+	function [15:0] xfer_response;
+		input [3:0] idx;
+		begin
+			case (idx)
+				4'd0: xfer_response = 16'h0000;                 // probe discard
+				4'd1: xfer_response = 16'h0000;                 // probe param
+				4'd2: xfer_response = 16'h0666;                 // version hi
+				4'd3: xfer_response = 16'h0000;                 // version lo
+				4'd4: xfer_response = 16'h0000;                 // setup discard
+				4'd5: xfer_response = 16'h0000;                 // setup discard
+				4'd6: xfer_response = BLOB_BYTES[15:0];         // download length
+				default: xfer_response = 16'h0000;
+			endcase
+		end
+	endfunction
+
+	//wire bus_hit = enable & cs & (rd | wr);
+
+	reg old_cs;
+
+	always @(posedge clk) begin
+		old_cs <= cs;
+		if (!rst_n || ~enable) begin
+			rdata         <= 16'h0000;
+			sync_bit3     <= 1'b0;
+			xfer_active   <= 1'b0;
+			xfer_phase    <= 1'b0;
+			xfer_word     <= 16'h0000;
+			xfer_idx      <= 4'd0;
+			download_mode <= 1'b0;
+			download_ptr  <= 16'h0000;
+			old_cs        <= 1'b0;
+		end else begin
+			if (!old_cs && cs && enable) begin
+
+				// The sync bit seems to follow a specific handshake dance and not just toggle on every access.
+				if (wr) begin
+					if (addr == ADDR_CMD) begin
+						if (wdata == 16'h0010) sync_bit3 <= 1'b0;
+						if (wdata == 16'h0011) sync_bit3 <= 1'b1;
+						if (wdata == 16'h0000) sync_bit3 <= 1'b0;
+					end
+
+					if (addr == ADDR_DATA) begin
+						if (!download_mode) begin
+							// Start a new XFER16 on first DATA write.
+							if (!xfer_active) begin
+								xfer_word   <= xfer_response(xfer_idx);
+								xfer_active <= 1'b1;
+								xfer_phase  <= 1'b0;
+							end
+							// Second DATA write in XFER16 (echo hi<<8) is ignored.
+						end
+						// In download mode, DATA writes are chunk counters; ignore.
+					end
+				end
+
+				if (rd) begin
+					if (addr == ADDR_CMD) begin
+						rdata <= cmd_status;
+					end else if (addr == ADDR_DATA) begin
+						rdata <= 16'h0000;
+					end else if (addr == ADDR_DATA8) begin
+						if (!download_mode) begin
+							if (xfer_active && !xfer_phase) begin
+								rdata      <= {8'h00, xfer_word[15:8]};
+								xfer_phase <= 1'b1;
+							end else if (xfer_active && xfer_phase) begin
+								rdata       <= {8'h00, xfer_word[7:0]};
+								xfer_active <= 1'b0;
+								xfer_phase  <= 1'b0;
+
+								if (xfer_idx == 4'd6) begin
+									download_mode <= 1'b1;
+									download_ptr  <= 16'h0000;
+								end
+								xfer_idx <= xfer_idx + 4'd1;
+							end else begin
+								rdata <= 16'h0000;
+							end
+						end else begin
+							if (download_ptr < BLOB_BYTES)
+								rdata <= {8'h00, blob_byte_at(download_ptr)};
+							else
+								rdata <= 16'h0000;
+
+							if (download_ptr < BLOB_BYTES)
+								download_ptr <= download_ptr + 16'd1;
+						end
+					end
+				end
+			end
+		end
+	end
+endmodule
