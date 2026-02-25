@@ -1,5 +1,5 @@
 // altera message_off 10036
- 
+
 // Functional; no netlist
 module _butch
 (
@@ -38,18 +38,17 @@ module _butch
 	output eeprom_sk,
 	output eeprom_dout,
 	input eeprom_din,
-input dohacks,
-output hackbus,
-output hackbus1,
-output hackbus2,
-output overflowo,
-output underflowo,
-output errflowo,
-output unhandledo,
-input cd_valid,
+	input dohacks,
+	output hackbus,
+	output hackbus1,
+	output hackbus2,
+	output overflowo,
+	output underflowo,
+	output errflowo,
+	output unhandledo,
+	input cd_valid,
 	input sys_clk
 );
-
 
 wire wet = !cart_ce_n && !(ewe0l && ewe2l);
 wire oet = !cart_ce_n && !(eoe0l && eoe1l);
@@ -230,10 +229,10 @@ reg updrespa;
 //SUBDATB   equ  BUTCH+$1C	; Subcode data register B
 //SB_TIME   equ  BUTCH+$20	; Subcode time and compare enable (D24)
 reg [6:0] rframes;  // 0-74 // (msf % 75)
-reg [5:0] rseconds; // 0-59 // (msf / 75) % 60
+reg [6:0] rseconds; // 0-59 // (msf / 75) % 60
 reg [6:0] rminutes; // 0-99 // (msf / 75) / 60
 reg [6:0] aframes;  // 0-74 // (msf % 75)
-reg [5:0] aseconds; // 0-59 // (msf / 75) % 60
+reg [6:0] aseconds; // 0-59 // (msf / 75) % 60
 reg [6:0] aminutes; // 0-99 // (msf / 75) / 60
 reg [6:0] atrack;   // 1-99
 wire [7:0] subcode [0:11];
@@ -241,11 +240,11 @@ assign subcode[0] = 8'h1; // 2 channel audio no preemphasis, address 1
 assign subcode[1] = bcd[atrack]; // trackno bcd
 assign subcode[2] = 8'h0; // trackidx bcd
 assign subcode[3] = bcd[rminutes]; // rel min bcd
-assign subcode[4] = bcd[{1'b0,rseconds}]; // rel sec bcd
+assign subcode[4] = bcd[rseconds]; // rel sec bcd
 assign subcode[5] = bcd[rframes]; // rel frames bcd
 assign subcode[6] = 8'h0; // zero
 assign subcode[7] = bcd[aminutes]; // abs min bcd
-assign subcode[8] = bcd[{1'b0,aseconds}]; // abs sec bcd
+assign subcode[8] = bcd[aseconds]; // abs sec bcd
 assign subcode[9] = bcd[aframes]; // abs frames bcd
 assign subcode[10] = crc1; // crc1 Polynomial = P(X)=X16+X12+X5+1
 assign subcode[11] = crc0; // crc0
@@ -276,7 +275,7 @@ wire [4:0] fifo_fill = (i2s_wfifopos - i2s_rfifopos);
 wire fifo_half = (fifo_fill >= 5'h8);
 
 //EEPROM    equ  BUTCH+$2C	; interface to CD-eeprom
-//;  bit3 - busy if 0 after write cmd, or Data In after read cmd 
+//;  bit3 - busy if 0 after write cmd, or Data In after read cmd
 //;  bit2 - Data Out
 //;  bit1 - clock
 //;  bit0 - Chip Select (CS)
@@ -410,10 +409,88 @@ reg [5:0] subtseconds; // 0-59
 reg [5:0] subtrseconds; // 0-59
 reg [15:0] last_ds;
 reg [31:0] seek_delay;
-//wire [31:0] seek_delay_set = 31'h7000; // TODO: Improve
-//wire [31:0] seek_delay_set = 31'h20000; // TODO: Improve - Add OSD option for faster seek if slow seek is not needed (only some overlapped streaming?)
-//wire [31:0] seek_delay_set = 31'h1000000; // TODO: Improve - If this is too short, audio distortions will occur in Vid Grid
-wire [31:0] seek_delay_set = 31'h2000000; // TODO: Improve? (32M / 106MHz ~= .3s)
+reg [31:0] seek_delay_set;
+reg [19:0] seek_src_abs;
+reg [19:0] seek_dst_abs;
+reg [20:0] seek_delta_abs;
+reg [19:0] seek_mid_abs;
+
+// CD-DA/CD-ROM frame time is mm:ss:ff with 75 frames/sec.
+function [19:0] msf_to_frames;
+	input [6:0] mins;
+	input [5:0] secs;
+	input [6:0] frms;
+	reg [19:0] mins_frames;
+	reg [19:0] secs_frames;
+begin
+	// mins * 4500 = mins * (4096 + 256 + 128 + 16 + 4)
+	mins_frames = {mins,12'h000} + {mins,8'h00} + {mins,7'h00} + {mins,4'h0} + {mins,2'h0};
+	// secs * 75 = secs * (64 + 8 + 2 + 1)
+	secs_frames = {secs,6'h00} + {secs,3'h0} + {secs,1'b0} + {14'h0000,secs};
+	msf_to_frames = mins_frames + secs_frames + {13'h0000,frms};
+end
+endfunction
+
+function [31:0] seek_delay_cycles;
+	input [20:0] delta_frames;
+	input [19:0] mid_frames;
+	input speed_2x;
+	reg [20:0] eff_delta;
+	reg [31:0] dist_cycles;
+	reg [31:0] rot_cycles;
+begin
+	// Position-aware distance scaling:
+	// near inner radius, same LBA delta is a larger radial move than outer radius.
+	eff_delta = delta_frames;
+	if (mid_frames < 20'd120000) begin
+		eff_delta = {delta_frames[19:0],1'b0}; // *2
+	end else if (mid_frames >= 20'd240000) begin
+		eff_delta = delta_frames >> 1;         // /2
+	end
+
+	// Distance component (approx seek sled motion + settle), in sys_clk cycles.
+	if (eff_delta < 21'd75) begin
+		dist_cycles = 32'd638160;      //   6 ms
+	end else if (eff_delta < 21'd750) begin
+		dist_cycles = 32'd1595400;     //  15 ms
+	end else if (eff_delta < 21'd3750) begin
+		dist_cycles = 32'd3190800;     //  30 ms
+	end else if (eff_delta < 21'd15000) begin
+		dist_cycles = 32'd6381600;     //  60 ms
+	end else if (eff_delta < 21'd45000) begin
+		dist_cycles = 32'd10104200;    //  95 ms
+	end else if (eff_delta < 21'd120000) begin
+		dist_cycles = 32'd14890400;    // 140 ms
+	end else begin
+		dist_cycles = 32'd20208400;    // 190 ms
+	end
+
+	// Rotational latency component (half-turn average), radius/speed dependent.
+	if (speed_2x) begin
+		if (mid_frames < 20'd120000) begin
+			rot_cycles = 32'd3722600;   // 35 ms @ inner
+		end else if (mid_frames < 20'd240000) begin
+			rot_cycles = 32'd4998920;   // 47 ms @ middle
+		end else begin
+			rot_cycles = 32'd6381600;   // 60 ms @ outer
+		end
+	end else begin
+		if (mid_frames < 20'd120000) begin
+			rot_cycles = 32'd7445200;   // 70 ms @ inner
+		end else if (mid_frames < 20'd240000) begin
+			rot_cycles = 32'd9997840;   // 94 ms @ middle
+		end else begin
+			rot_cycles = 32'd12763200;  //120 ms @ outer
+		end
+	end
+
+	// Base command/servo overhead: 8 ms.
+	seek_delay_cycles = 32'd850880 + dist_cycles + rot_cycles;
+end
+endfunction
+
+wire [19:0] cur_abs_frames = msf_to_frames(cur_aminutes, cur_aseconds, cur_aframes);
+wire [19:0] seek_cmd_abs_frames = msf_to_frames(sminutes, sseconds, din[6:0]);
 
 reg overflow;
 reg underflow;
@@ -467,18 +544,18 @@ assign cuet_wr = cuet_wrr;
 // Klax, Tetris
 //Session 1 has 2 track(s)
 //Creating cuesheet...
-//Saving  Track:  1  Type: Audio/2352  Size: 3346    LBA: 0       
-//Saving  Track:  2  Type: Audio/2352  Size: 894     LBA: 3496    
-//                                                          
+//Saving  Track:  1  Type: Audio/2352  Size: 3346    LBA: 0
+//Saving  Track:  2  Type: Audio/2352  Size: 894     LBA: 3496
+//
 //Session 2 has 4 track(s)
 //Creating cuesheet...
-//Saving  Track:  3  Type: Audio/2352  Size: 618     LBA: 15640   
-//Saving  Track:  4  Type: Audio/2352  Size: 669     LBA: 16408   
-//Saving  Track:  5  Type: Audio/2352  Size: 669     LBA: 17077   
-//Saving  Track:  6  Type: Audio/2352  Size: 448     LBA: 17746   
+//Saving  Track:  3  Type: Audio/2352  Size: 618     LBA: 15640
+//Saving  Track:  4  Type: Audio/2352  Size: 669     LBA: 16408
+//Saving  Track:  5  Type: Audio/2352  Size: 669     LBA: 17077
+//Saving  Track:  6  Type: Audio/2352  Size: 448     LBA: 17746
 //00 00 01 06 02 04 02 2C 01 00 02 00 00 00 2C 2E
 //02 00 2E 2E 00 00 0B 45 03 03 1E 28 01 00 08 12
-//04 03 26 3A 01 00 08 45 05 03 2F 34 01 00 08 45 
+//04 03 26 3A 01 00 08 45 05 03 2F 34 01 00 08 45
 //06 03 38 2E 01 00 05 49 00 00 00 00 00 00 00 00
 reg [6:0] cue_tracks;
 reg [6:0] aud_tracks;
@@ -565,10 +642,10 @@ begin
 		crc1  <= 8'h0;
 		crc0  <= 8'h0;
 		rframes <= cur_rframes;
-		rseconds <= cur_rseconds;
+		rseconds <= {1'b0, cur_rseconds};
 		rminutes <= cur_rminutes;
 		aframes <= cur_aframes;
-		aseconds <= cur_aseconds;
+		aseconds <= {1'b0, cur_aseconds};
 		aminutes <= cur_aminutes;
 		atrack <= track_idx;
 	end
@@ -610,55 +687,6 @@ begin
 	old_aud_rd3 <= old_aud_rd2;
 	old_upd_frames <= upd_frames;
 	butch_reg[11][3] <= eeprom_din;
-	if (!resetl) begin
-	hackwait <= 1'b0;
-	seek_count <= 8'h0;
-	pastcdbios <= 1'b0;
-		mounted <= 1'b0;
-		splay <= 5'h0;
-		play <= 1'b0;
-		stop <= 1'b0;
-		pause <= 1'b0;
-		spinpause <= 1'b0;
-		i2s1w <= 1'b0;
-		i2s2w <= 1'b0;
-		i2s3w <= 1'b0;
-		i2s4w <= 1'b0;
-		aud_rd <= 1'b0;
-		aud_add <= 30'h000000;
-		unhandled <= 1'b0;
-		upd_frames <= 1'b0;
-		upd_seconds <= 1'b0;
-		upd_minutes <= 1'b0;
-		mode <= 1'b0;
-		sdin[15:0] <= 0;
-		sdin3[15:0] <= 0;
-		sdin4[15:0] <= 0;
-		butch_reg[0] <= 32'h40000; // bios_rom
-		butch_reg[1] <= 0;
-		butch_reg[2] <= 0;
-		butch_reg[3] <= 0;
-		butch_reg[4] <= 0;
-		butch_reg[5] <= 0;
-		butch_reg[6] <= 0;
-		butch_reg[7] <= 0;
-		butch_reg[8] <= 0;
-		butch_reg[9] <= 0;
-		butch_reg[10] <= 0;
-		butch_reg[11] <= 0;
-		add_ch3[23:0] <= 24'h543210;
-		max_ch3[23:0] <= 24'h543210;
-		seek <= 8'h0;
-		i2s_rfifopos <= 5'h0;
-		i2s_wfifopos <= 5'h0;
-		fifo_inc <= 1'b0;
-		i2s_fifo[0] <= 0;
-		overflow <= 1'b0;
-		underflow <= 1'b0;
-		errflow <= 1'b0;
-	end
-	if (!cdbios)
-		pastcdbios <= 1'b1;
 
 	cues_wrr_next <= 0;
 	cuep_wrr_next <= 0;
@@ -726,7 +754,7 @@ begin
 			end
 		end
 	end
-	if (updabs) begin
+	if (updabs) begin // Everything below here should be reset when resetl is low
 		updabs <= 1'b0;
 		cur_aframes <= cues_dout[6:0];
 		cur_aseconds <= cues_dout[13:8];
@@ -1019,7 +1047,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			end
 		end
 	end
-	
+
 	if (wet && ain[23:8]==24'hdfff) begin // restrict to lower 0-3f?
 		if (ain[5:2]==4'h0) begin  // BUTCH ICR
 			if (!ewe2l) begin
@@ -1245,6 +1273,16 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 				sframes <= din[6:0];
+				seek_src_abs <= cur_abs_frames;
+				seek_dst_abs <= seek_cmd_abs_frames;
+				seek_mid_abs <= (cur_abs_frames + seek_cmd_abs_frames) >> 1;
+				if (seek_cmd_abs_frames >= cur_abs_frames) begin
+					seek_delta_abs <= seek_cmd_abs_frames - cur_abs_frames;
+					seek_delay_set <= seek_delay_cycles(seek_cmd_abs_frames - cur_abs_frames, (cur_abs_frames + seek_cmd_abs_frames) >> 1, speed2x);
+				end else begin
+					seek_delta_abs <= cur_abs_frames - seek_cmd_abs_frames;
+					seek_delay_set <= seek_delay_cycles(cur_abs_frames - seek_cmd_abs_frames, (cur_abs_frames + seek_cmd_abs_frames) >> 1, speed2x);
+				end
 				cues_addr <= num_tracks + 7'h1;
 				cuet_addr <= num_tracks + 7'h1;
 				seek <= 8'hFF;
@@ -1406,11 +1444,11 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			end
 			if (din[15:8]==8'h30) begin  // Get Disc identifiers - not implemented
 				unhandled <= 1'b1;
-				ds_resp[0] <= 32'h3000; //| disc_identifier[0][7:0]; 
-				ds_resp[1] <= 32'h3100; //| disc_identifier[1][7:0]; 
-				ds_resp[2] <= 32'h3200; //| disc_identifier[2][7:0]; 
-				ds_resp[3] <= 32'h3300; //| disc_identifier[3][7:0]; 
-				ds_resp[4] <= 32'h3400; //| disc_identifier[4][7:0]; 
+				ds_resp[0] <= 32'h3000; //| disc_identifier[0][7:0];
+				ds_resp[1] <= 32'h3100; //| disc_identifier[1][7:0];
+				ds_resp[2] <= 32'h3200; //| disc_identifier[2][7:0];
+				ds_resp[3] <= 32'h3300; //| disc_identifier[3][7:0];
+				ds_resp[4] <= 32'h3400; //| disc_identifier[4][7:0];
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
 				ds_resp_idx <= 3'h0;
@@ -1509,7 +1547,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 //				butch_reg[0][13] <= 1'b0; // &= ~0x2000
 			end
 		end
-	end	
+	end
 	if (updrespa) begin
 		updrespa <= 1'b0;
 		updresp <= 1'b1;
@@ -1524,7 +1562,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 		butch_reg[0][12] <= 1'b0;
 //		butch_reg[0][13] <= ((ds_resp[0][13:8] == 6'h20) || (ds_resp[0][15:8] == 6'h04)) ? 1'b1 : 1'b0; // gettoc==0x20 or 0x60
 		butch_reg[0][13] <= ((ds_resp_size == 3'h0) || (ds_resp_size == 3'h1)) ? 1'b0 : 1'b1; // gettoc==0x20 or 0x60
-	end	
+	end
 	if (old_doe_sub && !doe_sub) begin
 		subidx <= subidx + 4'h1;
 		if (4'hC == subidx + 4'h1) begin
@@ -1535,17 +1573,17 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			upd_frames <= 1'b0;
 			recrc <= 1'b1;
 		end
-	end	
+	end
 	if (!old_doe_sub && !doe_sub) begin
 		if ((4'h0 == subidx) && upd_frames) begin
 			upd_frames <= 1'b0;
 			recrc <= 1'b1;
 		end
-	end	
+	end
 	if (recrc && (attiabs || attirel)) begin
 		butch_reg[0][13] <= 1'b1; // |= 0x2000
 	end
-	
+
 	if (fifo_inc && (!doe_fif || eoe0l || (old_fif_a1 != fif_a1))) begin // if a1!= then swapping 24/28
 		fifo_inc <= 1'b0; // will stay 1 if swapping 24/28 below
 		if (i2s_rfifopos != i2s_wfifopos) begin
@@ -1559,6 +1597,123 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 	end
 	butch_reg[4][4] <= i2s_rfifopos != i2s_wfifopos;//0x10;
 	butch_reg[0][9] <= fifo_half; //  0x200
+
+	if (!resetl) begin
+		hackwait <= 1'b0;
+		seek_count <= 8'h0;
+		pastcdbios <= 1'b0;
+		recrc <= 1'b0;
+		subidx <= 4'h0;
+		mounted <= 1'b0;
+		splay <= 5'h0;
+		play <= 1'b0;
+		stop <= 1'b0;
+		pause <= 1'b0;
+		spinpause <= 1'b0;
+		i2s1w <= 1'b0;
+		i2s2w <= 1'b0;
+		i2s3w <= 1'b0;
+		i2s4w <= 1'b0;
+		aud_rd <= 1'b0;
+		aud_add <= 30'h000000;
+		unhandled <= 1'b0;
+		track_idx <= 7'h0;
+		cur_samples <= 10'h0;
+		cur_frames <= 7'h0;
+		cur_seconds <= 6'h0;
+		cur_minutes <= 7'h0;
+		cur_rframes <= 7'h0;
+		cur_rseconds <= 6'h0;
+		cur_rminutes <= 7'h0;
+		cur_aframes <= 7'h0;
+		cur_aseconds <= 6'h0;
+		cur_aminutes <= 7'h0;
+		upd_frames <= 1'b0;
+		upd_seconds <= 1'b0;
+		upd_minutes <= 1'b0;
+		updabs <= 1'b0;
+		ds_resp[0] <= 32'h0;
+		ds_resp[1] <= 32'h0;
+		ds_resp[2] <= 32'h0;
+		ds_resp[3] <= 32'h0;
+		ds_resp[4] <= 32'h0;
+		ds_resp_idx <= 3'h0;
+		ds_resp_size <= 3'h0;
+		ds_resp_loop <= 7'h0;
+		updresp <= 1'b0;
+		updrespa <= 1'b0;
+		mode <= 1'b0;
+		sdin[15:0] <= 0;
+		sdin3[15:0] <= 0;
+		sdin4[15:0] <= 0;
+		last_ds <= 16'h0;
+		seek_delay_set <= 32'h2000000;
+		seek_src_abs <= 20'h0;
+		seek_dst_abs <= 20'h0;
+		seek_delta_abs <= 21'h0;
+		seek_mid_abs <= 20'h0;
+		butch_reg[0] <= 32'h40000; // bios_rom
+		butch_reg[1] <= 0;
+		butch_reg[2] <= 0;
+		butch_reg[3] <= 0;
+		butch_reg[4] <= 0;
+		butch_reg[5] <= 0;
+		butch_reg[6] <= 0;
+		butch_reg[7] <= 0;
+		butch_reg[8] <= 0;
+		butch_reg[9] <= 0;
+		butch_reg[10] <= 0;
+		butch_reg[11] <= 0;
+		add_ch3[23:0] <= 24'h543210;
+		max_ch3[23:0] <= 24'h543210;
+		seek <= 8'h0;
+		sframes <= 7'h0;
+		sseconds <= 6'h0;
+		sminutes <= 7'h0;
+		gframes <= 3'h0;
+		subtseconds <= 6'h0;
+		subtrseconds <= 6'h0;
+		taud_add <= 19'h0;
+		taud2_add <= 22'h0;
+		taud3_add <= 20'h0;
+		seek_delay <= 32'h0;
+		i2s_rfifopos <= 5'h0;
+		i2s_wfifopos <= 5'h0;
+		fifo_inc <= 1'b0;
+		i2s_fifo[0] <= 0;
+		i2s_fifo[1] <= 0;
+		i2s_fifo[2] <= 0;
+		i2s_fifo[3] <= 0;
+		i2s_fifo[4] <= 0;
+		i2s_fifo[5] <= 0;
+		i2s_fifo[6] <= 0;
+		i2s_fifo[7] <= 0;
+		i2s_fifo[8] <= 0;
+		i2s_fifo[9] <= 0;
+		i2s_fifo[10] <= 0;
+		i2s_fifo[11] <= 0;
+		i2s_fifo[12] <= 0;
+		i2s_fifo[13] <= 0;
+		i2s_fifo[14] <= 0;
+		i2s_fifo[15] <= 0;
+		search_forward <= 1'b0;
+		search_backward <= 1'b0;
+		search_fast <= 1'b0;
+		search_borderflag <= 1'b0;
+		abplay <= 1'b0;
+		abseek <= 8'h0;
+		abaframes <= 7'h0;
+		abaseconds <= 6'h0;
+		abaminutes <= 7'h0;
+		abbframes <= 7'h0;
+		abbseconds <= 6'h0;
+		abbminutes <= 7'h0;
+		overflow <= 1'b0;
+		underflow <= 1'b0;
+		errflow <= 1'b0;
+	end
+	if (!cdbios)
+		pastcdbios <= 1'b1;
 end
 
 wire [6:0] cuet_add;
@@ -1779,19 +1934,19 @@ end
 //	move.l	#$dfff14,a4	; Subcode control register
 //	move.l	#Bblokend,a5	; Buffer limit
 //b:
-//	bra	SubPend		; First time through subcode will already be 
+//	bra	SubPend		; First time through subcode will already be
 //				; pending
 //get_bits:
 //	move.l	(a0),d0		; Read ICR
 //	btst	#10,d0		; Poll the subcode interrupt bit
 //	beq	get_bits
-//	
+//
 //SubPend:
 //	move.l	(a1),d0		; Read subcode data
 //	move.l	d0,d1		; d0=Srxx Used for S
-//	swap	d1		; d1=xxsR Used for R 
-//	move.l	4(a1),d2	; d2=Wvut Used for W 
-//	move.l	d2,d3		
+//	swap	d1		; d1=xxsR Used for R
+//	move.l	4(a1),d2	; d2=Wvut Used for W
+//	move.l	d2,d3
 //	move.l	d2,d4		; d4=wvUt Used for U
 //	move.l	d2,d5		; d5=wvuT Used for T
 //	swap	d3		; d3=utwV Used for V
@@ -1799,7 +1954,7 @@ end
 //;				*****************************************
 //;				*	 Assemble CD+G symbols		*
 //;				*****************************************
-//				; Data is now in registers d0-d5, now make 
+//				; Data is now in registers d0-d5, now make
 //				; CD+G symbols from it.
 //	move.l	#8,d6		; 8 symbols per subcode int
 //
@@ -1820,17 +1975,17 @@ end
 //	move.b	d7,(a3)+	; Buffer it
 //	cmp.l	a3,a5		; buffer full?
 //	beq	set4_cnt	; yes, branch to next routine
-//	subq	#1,d6	
+//	subq	#1,d6
 //	bne	NxtSym
 //	move.l	(a4),d7		; Clear pending interrupt
 //	bra	get_bits	; go round again
 
 
 //CDmode_g:			; init sort of like CD+G mode
-//	move.l	#$0,BUTCH	; Butch enable, no DSA 
+//	move.l	#$0,BUTCH	; Butch enable, no DSA
 //	move.l	#$1e8,SBCNTRL	; preload PRN  f2=1x, 1e8=2x
 //	move.l	#$3e8,SBCNTRL	; turn on the subcode counter  2f2= 1x, 3e8 2x
-//;	move.l	#$7,I2CNTRL	; 
+//;	move.l	#$7,I2CNTRL	;
 //;        move.l  #$F1A154,a0     ; put address into a0
 //;        move.l  #$14,d1         ; external clk, interrupt on every sample pair
 //;        move.l  d1,(a0)         ; write to Jerry
@@ -1838,4 +1993,3 @@ end
 
 
 endmodule
-

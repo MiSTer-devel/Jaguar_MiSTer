@@ -387,7 +387,7 @@ wire            fx68k_data_z;
 
 wire            fx68k_bus_en = ~fx68k_as_n & fx68k_bgack_n;
 wire            fx68k_fc_en = turbo ? fx68k_bus_en : ~fx68k_fc_z;
-wire            fx68k_rw_en =  turbo ? fx68k_bus_en : ~fx68k_rw_z;
+// wire            fx68k_rw_en =  turbo ? fx68k_bus_en : ~fx68k_rw_z;
 wire            fx68k_address_en =  turbo ? fx68k_bus_en : ~fx68k_address_z;
 wire            fx68k_data_en = turbo ? (fx68k_bus_en & ~fx68k_rw) : ~fx68k_data_z;
 
@@ -523,10 +523,14 @@ assign j_xa_in[23:0] =
 reg [63:0] open_bus; // Chances are this should be capacitance based
 
 always @(posedge sys_clk) begin
-	open_bus <= dbus;
+	if (~xresetl) begin
+		open_bus <= 64'hFFFF_FFFF_FFFF_FFFF;
+	end else begin
+		open_bus <= dbus;
+	end
 end
 
-wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
+//wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
 
 // External Data Bus
 wire e_dbus_oe = ~xexpl & rw;
@@ -708,31 +712,31 @@ wire hsync_int = ~vga_hs_n; // active-high HSYNC
 wire vsync_int = ~vga_vs_n; // active-high VSYNC
 reg  prev_hs = 1'b0, prev_vs = 1'b0;
 
-always @(posedge xvclk or negedge xresetl) begin
-  if (!xresetl) begin
-    beam_x  <= 12'd0;
-    beam_y  <= 10'd0;
-    prev_hs <= 1'b0;
-    prev_vs <= 1'b0;
-  end else begin
-    prev_hs <= hsync_int;
-    prev_vs <= vsync_int;
-    
-    // new frame
-    if (~prev_vs && vsync_int) begin
-      beam_x <= 12'd0;
-      beam_y <= 10'd0;
-    end
-    // new line
-    else if (~prev_hs && hsync_int) begin
-      beam_x <= 12'd0;
-      beam_y <= beam_y + 10'd1;
-    end
-    // advance within line
-    else begin
-      beam_x <= beam_x + 12'd1;
-    end
-  end
+always @(posedge sys_clk) begin
+	if (!xresetl) begin
+		beam_x  <= 12'd0;
+		beam_y  <= 10'd0;
+		prev_hs <= 1'b0;
+		prev_vs <= 1'b0;
+	end else if (xvclk) begin
+		prev_hs <= hsync_int;
+		prev_vs <= vsync_int;
+
+		// new frame
+		if (~prev_vs && vsync_int) begin
+		beam_x <= 12'd0;
+		beam_y <= 10'd0;
+		end
+		// new line
+		else if (~prev_hs && hsync_int) begin
+		beam_x <= 12'd0;
+		beam_y <= beam_y + 10'd1;
+		end
+		// advance within line
+		else begin
+		beam_x <= beam_x + 12'd1;
+		end
+	end
 end
 
 // Lightgun instance
@@ -746,23 +750,24 @@ wire lg_enabled  = (lightgun_mode != 2'd0);
 wire lg_port_select = 1'b0; // Move to option?
 
 jaguar_lightgun lightgun_inst (
-    .clk(xvclk),
-    .reset(~xresetl),
-    .ntsc(ntsc),
-    .ps2_mouse(use_mouse ? ps2_mouse : 25'd0),
-    .joy_x(use_joy1 ? analog_0 : analog_2),
-    .joy_y(use_joy1 ? analog_1 : analog_3),
-    .use_joystick(use_joy1 || use_joy2),
-    .enable(lg_enabled),
-    .port_select(lg_port_select),
-    .crosshair_mode(lightgun_crosshair),
-    .cycle(beam_x),
-    .scanline(beam_y),
-    .vsync(vsync_int),
-    .blank(blank),
-    .lp0(lp0), 
-    .lp1(lp1),
-    .draw_crosshair(draw_crosshair)
+	.clk(sys_clk),
+	.ce(xvclk),
+	.reset(~xresetl),
+	.ntsc(ntsc),
+	.ps2_mouse(use_mouse ? ps2_mouse : 25'd0),
+	.joy_x(use_joy1 ? analog_0 : analog_2),
+	.joy_y(use_joy1 ? analog_1 : analog_3),
+	.use_joystick(use_joy1 || use_joy2),
+	.enable(lg_enabled),
+	.port_select(lg_port_select),
+	.crosshair_mode(lightgun_crosshair),
+	.cycle(beam_x),
+	.scanline(beam_y),
+	.vsync(vsync_int),
+	.blank(blank),
+	.lp0(lp0),
+	.lp1(lp1),
+	.draw_crosshair(draw_crosshair)
 );
 
 // Team Tap for Port 1
@@ -1031,7 +1036,7 @@ jag_controller_mux controller_mux_2
 
 reg [1:0] sp_out0;
 reg [1:0] sp_out1;
-wire [7:0] spthresh = spinner_speed[1] ? 12'h8<<spinner_speed : 12'h8>>spinner_speed;
+wire [7:0] spthresh = spinner_speed[1] ? 8'h8<<spinner_speed : 8'h8>>spinner_speed;
 
 always @(posedge sys_clk) begin
 	reg [1:0] sp_prev;
@@ -1040,54 +1045,64 @@ always @(posedge sys_clk) begin
 	reg [8:0] spinner_0_abs;
 	reg [8:0] spinner_1_abs;
 
-	if (spinner_0[7]) begin
-		spinner_0_abs <= -$signed(spinner_0[7:0]);
+	if (~xresetl) begin
+		sp_out0 <= 2'b00;
+		sp_out1 <= 2'b00;
+		sp_prev <= 2'b00;
+		accum_0 <= 12'd0;
+		accum_1 <= 12'd0;
+		spinner_0_abs <= 9'd0;
+		spinner_1_abs <= 9'd0;
 	end else begin
-		spinner_0_abs <= spinner_0[7:0];
-	end
-
-	if (spinner_1[7]) begin
-		spinner_1_abs <= -$signed(spinner_1[7:0]);
-	end else begin
-		spinner_1_abs <= spinner_1[7:0];
-	end
-
-	sp_prev <= {spinner_1[8], spinner_0[8]};
-	if (spinner_0[8] != sp_prev[0]) begin
-		accum_0 <= accum_0 + spinner_0_abs;
-	end
-
-	if (spinner_1[8] != sp_prev[1]) begin
-		accum_1 <= accum_1 + spinner_1_abs;
-	end
-
-	if (ce_26_6_p3) begin
-		if (accum_0 >= spthresh) begin
-			case({spinner_0[7], sp_out0})
-				{1'b1, 2'b00}: sp_out0 <= 2'b01;
-				{1'b1, 2'b01}: sp_out0 <= 2'b11;
-				{1'b1, 2'b11}: sp_out0 <= 2'b10;
-				{1'b1, 2'b10}: sp_out0 <= 2'b00;
-				{1'b0, 2'b00}: sp_out0 <= 2'b10;
-				{1'b0, 2'b10}: sp_out0 <= 2'b11;
-				{1'b0, 2'b11}: sp_out0 <= 2'b01;
-				{1'b0, 2'b01}: sp_out0 <= 2'b00;
-			endcase
-			accum_0 <= 0;
+		if (spinner_0[7]) begin
+			spinner_0_abs <= -$signed(spinner_0[7:0]);
+		end else begin
+			spinner_0_abs <= spinner_0[7:0];
 		end
 
-		if (accum_1 >= spthresh) begin
-			case({spinner_1[7], sp_out1})
-				{1'b1, 2'b00}: sp_out1 <= 2'b01;
-				{1'b1, 2'b01}: sp_out1 <= 2'b11;
-				{1'b1, 2'b11}: sp_out1 <= 2'b10;
-				{1'b1, 2'b10}: sp_out1 <= 2'b00;
-				{1'b0, 2'b00}: sp_out1 <= 2'b10;
-				{1'b0, 2'b10}: sp_out1 <= 2'b11;
-				{1'b0, 2'b11}: sp_out1 <= 2'b01;
-				{1'b0, 2'b01}: sp_out1 <= 2'b00;
-			endcase
-			accum_1 <= 0;
+		if (spinner_1[7]) begin
+			spinner_1_abs <= -$signed(spinner_1[7:0]);
+		end else begin
+			spinner_1_abs <= spinner_1[7:0];
+		end
+
+		sp_prev <= {spinner_1[8], spinner_0[8]};
+		if (spinner_0[8] != sp_prev[0]) begin
+			accum_0 <= accum_0 + spinner_0_abs;
+		end
+
+		if (spinner_1[8] != sp_prev[1]) begin
+			accum_1 <= accum_1 + spinner_1_abs;
+		end
+
+		if (ce_26_6_p3) begin
+			if (accum_0 >= spthresh) begin
+				case({spinner_0[7], sp_out0})
+					{1'b1, 2'b00}: sp_out0 <= 2'b01;
+					{1'b1, 2'b01}: sp_out0 <= 2'b11;
+					{1'b1, 2'b11}: sp_out0 <= 2'b10;
+					{1'b1, 2'b10}: sp_out0 <= 2'b00;
+					{1'b0, 2'b00}: sp_out0 <= 2'b10;
+					{1'b0, 2'b10}: sp_out0 <= 2'b11;
+					{1'b0, 2'b11}: sp_out0 <= 2'b01;
+					{1'b0, 2'b01}: sp_out0 <= 2'b00;
+				endcase
+				accum_0 <= 0;
+			end
+
+			if (accum_1 >= spthresh) begin
+				case({spinner_1[7], sp_out1})
+					{1'b1, 2'b00}: sp_out1 <= 2'b01;
+					{1'b1, 2'b01}: sp_out1 <= 2'b11;
+					{1'b1, 2'b11}: sp_out1 <= 2'b10;
+					{1'b1, 2'b10}: sp_out1 <= 2'b00;
+					{1'b0, 2'b00}: sp_out1 <= 2'b10;
+					{1'b0, 2'b10}: sp_out1 <= 2'b11;
+					{1'b0, 2'b11}: sp_out1 <= 2'b01;
+					{1'b0, 2'b01}: sp_out1 <= 2'b00;
+				endcase
+				accum_1 <= 0;
+			end
 		end
 	end
 end
@@ -1141,12 +1156,14 @@ assign b[6] = 1'b1;             // Unused open
 assign b[7] = 1'b0;             // Unused short
 
 always @(posedge sys_clk) begin
-	u374_clk_prev <= j_xjoy_in[2];
-	if (~u374_clk_prev & j_xjoy_in[2]) begin
-		u374_reg[7:0] <= e_dbus[7:0];
-	end
 	if (~xresetl) begin
+		u374_clk_prev <= 1'b1;
 		u374_reg[7:0] <= 8'b11111111;
+	end else begin
+		u374_clk_prev <= j_xjoy_in[2];
+		if (~u374_clk_prev & j_xjoy_in[2]) begin
+			u374_reg[7:0] <= e_dbus[7:0];
+		end
 	end
 end
 
@@ -1302,7 +1319,7 @@ wire [15:0] dspwd;
 _j_jerry jerry_inst
 (
 	.xdspcsl         (j_xdspcsl),
-	.xpclkosc        (xvclk),
+	.xpclkosc        (j_xpclkosc),
 	.xpclkin         (j_xpclkin),
 	.xdbgl           (j_xdbgl),
 	.xoel_0          (j_xoel_0),
