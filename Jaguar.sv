@@ -512,7 +512,8 @@ reg bios_overwrote = 0;
 reg cd_loaded = 0;
 reg old_cmc;
 
-wire cd_stream_start = !old_cmc && cd_media_change;
+wire cd_stream_prestart = !old_cmc && cd_media_change;
+wire cd_stream_start = old_cmc && !cd_media_change;
 
 always @(posedge clk_sys) begin
 	old_cmc <= cd_media_change;
@@ -617,7 +618,7 @@ always @(posedge clk_sys) begin
 	end
 end
 
-wire reset = RESET | status[0] | buttons[1] | status[15];
+wire reset = RESET | status[0] | buttons[1] | status[15] | cd_stream_prestart;
 
 wire xresetlp = !(reset | os_download | cart_download | cue_download | cdos_download| nvme_download| !cd_init);	// Forces reset on BIOS (boot.rom) load (ioctl_index==0), AND cart ROM.
 wire xresetl = xresetlp && !(|bootcopy) && !(|timed_reset);
@@ -2150,4 +2151,5 @@ CODES #(.ADDR_WIDTH(24), .DATA_WIDTH(16), .BIG_ENDIAN(1)) codes_68k
 );
 
 endmodule
+
 
