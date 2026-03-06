@@ -83,8 +83,8 @@ module jaguar
 	input maxc,
 	input               auto_eeprom,
 	output      [23:0]  addr_ch3,
-	input        [9:0]  toc_addr,
-	input       [15:0]  toc_data,
+	input       [9:0]   toc_addr,
+	input      [15:0]   toc_data,
 	input               toc_wr,
 
 	output      [29:0]  audbus_out,
@@ -93,10 +93,29 @@ module jaguar
 	input               audwaitl,
 	output              aud_ce,
 	input               aud_busy,
-	input aud_sess,
+	input               aud_sess,
+	input               force_music_cd,
+	output      [6:0]   dbg_butch_cue_tracks,
+	output      [6:0]   dbg_butch_aud_tracks,
+	output      [6:0]   dbg_butch_dat_track,
+	output      [7:0]   dbg_butch_dsa_sessions,
+	output              dbg_butch_sess1_valid,
+	output      [15:0]  dbg_butch_last_ds,
+	output      [7:0]   dbg_butch_last_err,
+	output      [6:0]   dbg_butch_track_idx,
+	output      [6:0]   dbg_butch_cues_addr,
+	output      [6:0]   dbg_butch_cuet_addr,
+	output      [15:0]  dbg_butch_resp_54,
+	output      [39:0]  dbg_butch_toc0,
+	output      [39:0]  dbg_butch_toc1,
+	output      [15:0]  dbg_butch_spin,
+	output      [15:0]  dbg_butch_ltoc0,
+	output      [15:0]  dbg_butch_ltoc1,
+	output              dbg_butch_toc_ready,
 
 	input               cd_en,
 	input               cd_ex,
+	input               cd_latency_en,
 	output              b_override,
 	input               dohacks,
 	output              xvclk_o,
@@ -117,7 +136,8 @@ module jaguar
 	input [15:0]       m68k_di,
 	input              gamedrive_enable,
 
-	input               ntsc
+	input               ntsc,
+	input               video_center
 );
 assign xvclk_o = xvclk;
 
@@ -419,7 +439,8 @@ assign j_xwel_0 = xwel[0];              // Write Enable
 
 assign j_xdtackl = xdtackl;             // Data Acknowledge from Tom (also goes to the 68K)
 //assign j_xi2srxd = 1'b1;                // (Async?) I2S receive
-//assign j_xeint[0] = 1'b1;               // External Interrupt
+// External interrupt input follows Butch directly.
+assign j_xeint[0] = b_eint;
 assign j_xeint[1] = 1'b1;               // External Interrupt
 assign j_xtest = 1'b0;                  // "test" pins on both Tom and Jerry are tied to GND on the Jag
 assign j_xchrin = 1'b1;                 // Not used
@@ -1305,7 +1326,9 @@ _tom tom_inst
 	.startwe         (startwe),
 	.atp             (dram_addrp[10:3]),
 	.vintbugfix      (vintbugfix),
-	.turbo           (turbo)
+	.turbo           (turbo),
+	.ntsc            (ntsc),
+	.video_center    (video_center)
 );
 
 assign vga_hs_n = ~xhs_out;
@@ -1401,6 +1424,7 @@ wire b_ee_cs;
 wire b_ee_sk;
 wire b_ee_dout;
 wire b_ee_din;
+wire b_eint;
 wire [31:0] cart_qt = b_doe ? b_dout : cart_q;
 _butch butch_inst
 (
@@ -1409,6 +1433,7 @@ _butch butch_inst
 	.cart_ce_n       (cart_ce_n),
 	.cd_en           (cd_en),
 	.cd_ex           (cd_ex),
+	.cd_latency_en   (cd_latency_en),
 	.eoe0l           (b_eoe0l),
 	.eoe1l           (b_eoe1l),
 	.ewe0l           (b_ewe0l),
@@ -1423,22 +1448,23 @@ _butch butch_inst
 	.audwaitl        (audwaitl),
 	.aud_cbusy       (aud_busy),
 	.i2srxd          (j_xi2srxd),
-	.eint            (j_xeint[0]),
+	.eint            (b_eint),
 	.sen             (b_xsck_oe),
 	.sck             (b_xsck_out),
 	.ws              (b_xws_out),
 	.override        (b_override),
 	.aud_ce          (aud_ce),
 	.aud_sess        (aud_sess),
+	.force_music_cd  (force_music_cd),
+	.toc_addr        (toc_addr),
+	.toc_data        (toc_data),
+	.toc_wr          (toc_wr),
 	.eeprom_cs       (b_ee_cs),
 	.eeprom_sk       (b_ee_sk),
 	.eeprom_dout     (b_ee_din),
 	.eeprom_din      (b_ee_dout),
 	.maxc            (maxc),
 	.addr_ch3        (addr_ch3[23:0]),
-	.toc_addr        (toc_addr),
-	.toc_data        (toc_data),
-	.toc_wr          (toc_wr),
 	.dohacks (dohacks),
 	.hackbus (hackbus),
 	.hackbus1 (hackbus1),
@@ -1448,6 +1474,23 @@ _butch butch_inst
 	.errflowo (errflow),
 	.unhandledo (unhandled),
 	.cd_valid(cd_valid),
+	.dbg_cue_tracks(dbg_butch_cue_tracks),
+	.dbg_aud_tracks(dbg_butch_aud_tracks),
+	.dbg_dat_track(dbg_butch_dat_track),
+	.dbg_dsa_sessions(dbg_butch_dsa_sessions),
+	.dbg_sess1_valid(dbg_butch_sess1_valid),
+	.dbg_last_ds(dbg_butch_last_ds),
+	.dbg_last_err(dbg_butch_last_err),
+	.dbg_track_idx(dbg_butch_track_idx),
+	.dbg_cues_addr(dbg_butch_cues_addr),
+	.dbg_cuet_addr(dbg_butch_cuet_addr),
+	.dbg_resp_54(dbg_butch_resp_54),
+	.dbg_toc0(dbg_butch_toc0),
+	.dbg_toc1(dbg_butch_toc1),
+	.dbg_spin(dbg_butch_spin),
+	.dbg_ltoc0(dbg_butch_ltoc0),
+	.dbg_ltoc1(dbg_butch_ltoc1),
+	.dbg_toc_ready(dbg_butch_toc_ready),
 	.sys_clk         (sys_clk)
 );
 wire b_xsck_oe;
@@ -1565,7 +1608,7 @@ fx68k fx68k_inst
 	.IPL0n          (fx68k_ipl_n[0]),  // input
 	.IPL1n          (fx68k_ipl_n[1]),  // input
 	.IPL2n          (fx68k_ipl_n[2]),  // input
-	.iEdb           (fx68k_din),       // input
+	.iEdb           (m68k_di),       // input
 	.oEdb           (fx68k_dout),      // output
 	.eab            (fx68k_address)    // output
 );

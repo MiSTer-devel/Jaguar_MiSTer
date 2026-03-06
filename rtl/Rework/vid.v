@@ -42,6 +42,8 @@ module _vid
 	input vey,
 	input vly,
 	input lock,
+	input ntsc,
+	input video_center,
 	output start,
 	output dd,
 	output lbufa,
@@ -628,8 +630,16 @@ begin
 end
 assign vbbeq = vbb[10:0] == vc[10:0];
 assign vbeeq = vbe[10:0] == vc[10:0];
-assign vdbeq = vdb[10:0] == vc[10:0];
-assign vdeeq = vde[10:0] == vc[10:0];
+// Optional vertical centering tweak:
+// move active video start earlier so top-only black is reduced and bottom headroom improves.
+// keep VDE sentinel (all ones) untouched so "no explicit data end" behavior is preserved.
+wire [10:0] vcenter_shift = ntsc ? 11'd16 : 11'd8; // NTSC: 8 lines, PAL: 4 lines (half-line units)
+wire [10:0] vdb_shifted = (vdb[10:0] > vcenter_shift) ? (vdb[10:0] - vcenter_shift) : 11'd0;
+wire [10:0] vde_shifted = (vde[10:0] > vcenter_shift) ? (vde[10:0] - vcenter_shift) : 11'd0;
+wire [10:0] vdb_eff = video_center ? vdb_shifted : vdb[10:0];
+wire [10:0] vde_eff = (video_center && (vde[10:0] != 11'h7FF)) ? vde_shifted : vde[10:0];
+assign vdbeq = vdb_eff == vc[10:0];
+assign vdeeq = vde_eff == vc[10:0];
 assign vebeq = veb[10:0] == vc[10:0];
 assign veeeq = vee[10:0] == vc[10:0];
 assign vseq = vs[10:0] == vc[10:0];
@@ -974,4 +984,3 @@ assign dr_out[11] = (dr_vc_oe & dr_vc_out[11]) | (dr_lph_oe & dr_lph_out[11]) | 
 assign dr_11_0_oe = dr_15_12_oe | dr_test3r_oe;
 
 endmodule
-

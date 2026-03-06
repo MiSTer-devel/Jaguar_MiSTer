@@ -89,6 +89,8 @@ module _tom
 	output [10:3] atp,	
 	input turbo,
 	input vintbugfix,	
+	input ntsc,
+	input video_center,
 	output wire hsl,
 	output wire vsl
 );
@@ -850,6 +852,8 @@ _vid vid_inst
 	.vey /* IN */ (vey),
 	.vly /* IN */ (vly),
 	.lock /* IN */ (lock),
+	.ntsc /* IN */ (ntsc),
+	.video_center /* IN */ (video_center),
 	.start /* OUT */ (start),
 	.dd /* OUT */ (dd),
 	.lbufa /* OUT */ (lbufa),
@@ -1402,4 +1406,3 @@ assign dr_15_12_oe = dr_gpu_oe | dr_vid_15_12_oe | dr_abus_oe | dr_ob_oe | dr_ob
 assign justify_out = (justify_gpu_oe ? justify_gpu_out : 1'b0) | (justify_mem_oe ? justify_mem_out : 1'b0) | (justify_ob_oe ? justify_ob_out : 1'b0);
 assign justify_oe = justify_gpu_oe | justify_mem_oe | justify_ob_oe;
 endmodule
-

@@ -142,6 +142,7 @@ wire [7:0] p__ = fractional[17] ? cd2x ? 8'h4 : 8'h9 : p_[7:0]; // 4 or 9 less l
 reg [17:0] fractional;
 reg old_wsout;
 // Goal = 9.279 for 2x
+// Goal = 9.421 for 2x
 // 2*(3+1)=8
 // 2*(4+1)=10
 // To increase accuracy using fractional counter instead of only alternating (alternating=(8+10)/2=9)
@@ -154,16 +155,20 @@ reg old_wsout;
 // 90.703us @ x2 = 32 bytes
 // 9647.5 cycles @ 106.36MHz = 90.703us
 // 358200 bytes/sec at double rate
+// 352800 bytes/sec at double rate
 // 265909/(358.2*8) = 9.279 cycles/bit
+// 265909/(352.8*8) = 9.421 cycles/bit
 // 1.279 = 18'h1476D (lower 16 bits=fraction) for 2x
 // 0.558 = 18'h08ED9 (lower 16 bits=fraction) for 1x
+// 1.421 = 18'h16BDF (lower 16 bits=fraction) for 2x
+// 0.843 = 18'h0D7BE (lower 16 bits=fraction) for 1x
 // When adds to 2, overflow to p[] which has resolution of 2
 always @(posedge sys_clk)
 begin
 	old_wsout <= wsout;
 	if (~old_clk && clk) begin
-		if (~wsout != old_wsout) begin
-			fractional[17:0] <= fractional[16:0] + cd2x ? 18'h1476D : 18'h8ED9; // default cd speed = 1x
+		if (wsout != old_wsout) begin
+			fractional[17:0] <= fractional[16:0] + (cd2x ? 18'h16BC7 : 18'h0D7CF); // default cd speed = 1x
 		end
 	end
 end
