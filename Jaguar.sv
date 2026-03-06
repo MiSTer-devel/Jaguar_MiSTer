@@ -718,7 +718,7 @@ wire [15:0] aud_16_r;
 
 wire ser_data_in;
 wire ser_data_out;
-assign ser_data_in = USER_IN[0];
+assign ser_data_in = USER_IN[2];
 assign USER_OUT[1] = ser_data_out;
 
 wire m68k_clk;
