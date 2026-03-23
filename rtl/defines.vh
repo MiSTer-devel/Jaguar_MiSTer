@@ -1,0 +1,1 @@
+`define FAST_COMPILE

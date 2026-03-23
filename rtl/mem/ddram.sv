@@ -43,7 +43,8 @@ module ddram
 	input  [27:1] rdaddr,
 	output [15:0] dout,
 	input         rd_req,
-	output reg    rd_ack
+	output reg    rd_ack,
+	output        active
 );
 
 assign DDRAM_BURSTCNT = ram_burst;
@@ -52,6 +53,7 @@ assign DDRAM_ADDR     = {4'b0011, ram_address[27:3]}; // RAM at 0x30000000
 assign DDRAM_RD       = ram_read;
 assign DDRAM_DIN      = ram_data;
 assign DDRAM_WE       = ram_write;
+assign active         = (state != 0) || ram_read || ram_write;
 
 assign dout = ram_q[{rdaddr[2:1], 4'b0000} +:16];
 

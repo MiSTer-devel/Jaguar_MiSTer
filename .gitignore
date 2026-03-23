@@ -1,5 +1,6 @@
 db
 greybox_tmp
+helpers
 incremental_db
 output_files
 simulation
@@ -7,6 +8,7 @@ hc_output
 scaler
 hps_isw_handoff
 vip
+AGENTS.md
 *_sim
 .qsys_edit
 PLLJ_PLLSPE_INFO.txt

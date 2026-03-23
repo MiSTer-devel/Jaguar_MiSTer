@@ -1,4 +1,6 @@
+
 // jaguar_lightgun.sv – Integrated lightgun with crosshair overlay
+`include "defines.vh"
 module jaguar_lightgun (
 	input  logic        clk,           // xvclk
 	input  logic        ce,            // clock enable
@@ -50,6 +52,7 @@ module jaguar_lightgun (
 	localparam logic signed [11:0] Y_SKEW = Y_SKEW_PIX_S32[11:0];
 	localparam logic signed [11:0] WINDOW_PIX_S = WINDOW_PIX_S32[11:0];
 
+`ifndef FAST_COMPILE
 	// Constant-divide helpers implemented as reciprocal shift/add.
 	// div204_fast/div240_fast are exact in this design's operand ranges.
 	// div273_fast is a close approximation (max error 1 LSB over 0..65280).
@@ -345,5 +348,9 @@ module jaguar_lightgun (
 	wire draw_v = active_video && (dx_abs <= 10'd0) && (dy_abs <= crosshair_size);
 
 	assign draw_crosshair = enable && (crosshair_mode != 2'd3) && (draw_h | draw_v);
-
+`else
+		assign lp0 = 1'b0;
+		assign lp1 = 1'b0;
+		assign draw_crosshair = 1'b0;
+`endif
 endmodule
