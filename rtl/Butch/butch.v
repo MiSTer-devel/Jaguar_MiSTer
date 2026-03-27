@@ -41,15 +41,16 @@ module _butch
 	output eeprom_sk,
 	output eeprom_dout,
 	input eeprom_din,
-input dohacks,
-output hackbus,
-output hackbus1,
-output hackbus2,
-output overflowo,
-output underflowo,
-output errflowo,
-output unhandledo,
-input cd_valid,
+	// Abstracted
+	input dohacks,
+	output hackbus,
+	output hackbus1,
+	output hackbus2,
+	output overflowo,
+	output underflowo,
+	output errflowo,
+	output unhandledo,
+	input cd_valid,
 	input sys_clk
 );
 
@@ -428,6 +429,8 @@ reg atti_evt_abs_seconds_pending;
 reg atti_force_full_update;
 reg play_title_pending_rsp;
 reg [6:0] play_title_pending_track;
+reg title_len_pending_rsp;
+reg ab_found_pending_rsp;
 reg goto_found_pending_rsp;
 reg scan_goto_pending;
 reg leadout_title_pending;
@@ -478,6 +481,19 @@ reg [6:0] abaminutes; // 0-99 // (msf / 75) / 60
 reg [6:0] abbframes; // 0-74  // (msf % 75)
 reg [5:0] abbseconds; // 0-59 // (msf / 75) % 60
 reg [6:0] abbminutes; // 0-99 // (msf / 75) / 60
+reg [7:0] dsa_last_error;
+
+task queue_dsa_error;
+	input [7:0] error_code;
+begin
+	butch_reg[0][13] <= 1'b1;
+	ds_resp[0] <= 32'h0400 | error_code;
+	ds_resp_idx <= 3'h0;
+	ds_resp_size <= 3'h1;
+	ds_resp_loop <= 7'h0;
+	dsa_last_error <= error_code;
+end
+endtask
 
 task clear_audio_transport;
 begin
@@ -498,6 +514,50 @@ begin
 	i2s1w <= 1'b1;
 	i2s2w <= 1'b1;
 	sdin[15:0] <= 16'h0;
+end
+endtask
+
+task clear_dsa_runtime_events;
+begin
+	play_title_pending_rsp <= 1'b0;
+	goto_found_pending_rsp <= 1'b0;
+	ab_found_pending_rsp <= 1'b0;
+	scan_goto_pending <= 1'b0;
+	subcode_irq_pending <= 1'b0;
+	frame_irq_pending <= 1'b0;
+	sub_chunk_count <= 8'h0F;
+	subidx <= 4'h0;
+	recrc <= 1'b1;
+	atti_report_valid <= 1'b0;
+	atti_force_full_update <= 1'b0;
+	atti_evt_title_pending <= 1'b0;
+	atti_evt_index_pending <= 1'b0;
+	atti_evt_rel_minutes_pending <= 1'b0;
+	atti_evt_rel_seconds_pending <= 1'b0;
+	atti_evt_abs_minutes_pending <= 1'b0;
+	atti_evt_abs_seconds_pending <= 1'b0;
+	leadout_title_pending <= 1'b0;
+	leadout_seen <= 1'b0;
+end
+endtask
+
+task clear_dsa_seek_events;
+begin
+	goto_found_pending_rsp <= 1'b0;
+	ab_found_pending_rsp <= 1'b0;
+	scan_goto_pending <= 1'b0;
+	subcode_irq_pending <= 1'b0;
+	frame_irq_pending <= 1'b0;
+	sub_chunk_count <= 8'h0F;
+	subidx <= 4'h0;
+	recrc <= 1'b1;
+	atti_evt_title_pending <= 1'b0;
+	atti_evt_index_pending <= 1'b0;
+	atti_evt_rel_minutes_pending <= 1'b0;
+	atti_evt_rel_seconds_pending <= 1'b0;
+	atti_evt_abs_minutes_pending <= 1'b0;
+	atti_evt_abs_seconds_pending <= 1'b0;
+	leadout_title_pending <= 1'b0;
 end
 endtask
 
@@ -595,6 +655,16 @@ begin
 end
 endfunction
 
+function [15:0] msf_to_seconds;
+	input [6:0] mins;
+	input [5:0] secs;
+	reg [15:0] mins_seconds;
+begin
+	mins_seconds = {mins,6'h00} - {mins,2'h0};
+	msf_to_seconds = mins_seconds + {10'h000,secs};
+end
+endfunction
+
 wire [22:0] cur_abs_packed = {cur_aminutes,2'b00,cur_aseconds,1'b0,cur_aframes};
 wire [22:0] subq_track_start_packed = cues_dout[22:0];
 wire [22:0] subq_track_pregap_packed = cuep_dout[22:0];
@@ -604,6 +674,16 @@ wire subq_pregap = dsa_disc_ready && !subq_leadout && !subq_program && (cur_abs_
 wire [22:0] dsa_goto_target_packed = {goto_minutes,2'b00,goto_seconds,1'b0,din[6:0]};
 wire [19:0] cur_abs_frames = msf_to_frames(cur_aminutes, cur_aseconds, cur_aframes);
 wire [19:0] goto_cmd_abs_frames_next = msf_to_frames(goto_minutes, goto_seconds, din[6:0]);
+wire [15:0] cuel_seconds = msf_to_seconds(cuel_dout[22:16], cuel_dout[13:8]);
+wire [22:0] ab_start_packed = {abaminutes,2'b00,abaseconds,1'b0,abaframes};
+wire [22:0] ab_end_packed = {abbminutes,2'b00,abbseconds,1'b0,abbframes};
+wire [22:0] ab_end_packed_next = {abbminutes,2'b00,abbseconds,1'b0,din[6:0]};
+wire [19:0] ab_start_frames = msf_to_frames(abaminutes, abaseconds, abaframes);
+wire [19:0] ab_end_frames = msf_to_frames(abbminutes, abbseconds, abbframes);
+wire [19:0] ab_end_frames_next = msf_to_frames(abbminutes, abbseconds, din[6:0]);
+wire [20:0] ab_start_delta_frames = (cur_abs_frames >= ab_start_frames) ?
+	({1'b0,cur_abs_frames} - {1'b0,ab_start_frames}) :
+	({1'b0,ab_start_frames} - {1'b0,cur_abs_frames});
 wire [20:0] goto_delta_frames = (cur_abs_frames >= goto_cmd_abs_frames_next) ?
 	({1'b0,cur_abs_frames} - {1'b0,goto_cmd_abs_frames_next}) :
 	({1'b0,goto_cmd_abs_frames_next} - {1'b0,cur_abs_frames});
@@ -869,6 +949,7 @@ begin
 		aud_rd <= 1'b0;
 		aud_add <= 30'h000000;
 		unhandled <= 1'b0;
+		dsa_last_error <= 8'h00;
 		upd_frames <= 1'b0;
 		upd_seconds <= 1'b0;
 		upd_minutes <= 1'b0;
@@ -912,6 +993,8 @@ begin
 		atti_evt_abs_seconds_pending <= 1'b0;
 		atti_force_full_update <= 1'b0;
 		play_title_pending_rsp <= 1'b0;
+		title_len_pending_rsp <= 1'b0;
+		ab_found_pending_rsp <= 1'b0;
 		play_title_pending_track <= 7'h0;
 		goto_found_pending_rsp <= 1'b0;
 		scan_goto_pending <= 1'b0;
@@ -954,6 +1037,7 @@ begin
 			dat_track <= 7'h0;
 			track_idx <= 7'h1;
 			unhandled <= 1'b0;
+			dsa_last_error <= 8'h00;
 			play <= 1'b0;
 			stop <= 1'b0;
 			stop_flush_ws <= 3'h0;
@@ -983,6 +1067,8 @@ begin
 			upd_seconds <= 1'b0;
 			upd_minutes <= 1'b0;
 			play_title_pending_rsp <= 1'b0;
+			title_len_pending_rsp <= 1'b0;
+			ab_found_pending_rsp <= 1'b0;
 			goto_found_pending_rsp <= 1'b0;
 			scan_goto_pending <= 1'b0;
 			atti_report_valid <= 1'b0;
@@ -1125,6 +1211,16 @@ begin
 		ds_resp_loop <= 7'h0;
 		play_title_pending_rsp <= 1'b0;
 	end
+	if (title_len_pending_rsp && (ds_resp_size == 3'h0) && !ds_a) begin
+		butch_reg[0][12] <= 1'b1;
+		butch_reg[0][13] <= 1'b1;
+		ds_resp[0] <= 32'h0900 | cuel_seconds[7:0];
+		ds_resp[1] <= 32'h0A00 | cuel_seconds[15:8];
+		ds_resp_idx <= 3'h0;
+		ds_resp_size <= 3'h2;
+		ds_resp_loop <= 7'h0;
+		title_len_pending_rsp <= 1'b0;
+	end
 	if (goto_found_pending_rsp && (ds_resp_size <= 3'h1) && !ds_a && !butch_reg[0][13]) begin
 		butch_reg[0][12] <= 1'b1;
 		butch_reg[0][13] <= 1'b1;
@@ -1260,7 +1356,7 @@ begin
 						pause <= 1'b1;
 					end else begin
 						splay <= 5'h5;
-						splay[4] <= i2s_jerry || i2s_fifo_enabled;
+						splay[4] <= 1'b1;
 					end
 					upd_frames <= 1'b1;
 					if (seek_found_pending) begin
@@ -1272,7 +1368,15 @@ begin
 						atti_evt_rel_seconds_pending <= 1'b0;
 						atti_evt_abs_minutes_pending <= 1'b0;
 						atti_evt_abs_seconds_pending <= 1'b0;
-						if (cdrommd || pause_mode_indicator || scan_goto_pending) begin
+						if (ab_found_pending_rsp) begin
+							ds_resp[0] <= 32'h0100 | 32'h0044;
+							ds_resp_size <= 3'h1;
+							atti_report_valid <= 1'b0;
+							ds_resp_idx <= 3'h0;
+							ds_resp_loop <= 7'h0;
+							butch_reg[0][13] <= 1'b1; // |= 0x2000
+							ab_found_pending_rsp <= 1'b0;
+						end else if (cdrommd || pause_mode_indicator || scan_goto_pending) begin
 							if (attiabs || attirel) begin
 								ds_resp[0] <= 32'h1000 | atti_cur_title;
 								ds_resp[1] <= 32'h1100 | atti_cur_index;
@@ -1473,6 +1577,20 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 							upd_frames <= 1'b1;
 							frame_irq_pending <= 1'b1;
 							cur_samples <= 10'h0;
+							if (abplay && (cur_abs_packed >= ab_end_packed)) begin
+								abplay <= 1'b0;
+								play <= 1'b0;
+								stop <= 1'b1;
+								stop_flush_ws <= STOP_FLUSH_WS_COUNT;
+								ds_resp[0] <= 32'h0100 | 32'h0045;
+								ds_resp_idx <= 3'h0;
+								ds_resp_size <= 3'h1;
+								ds_resp_loop <= 7'h0;
+								butch_reg[0][13] <= 1'b1; // |= 0x2000
+								i2s1w <= 1'b1;
+								i2s2w <= 1'b1;
+								sdin[15:0] <= 16'h0;
+							end
 							if ({cur_aminutes,2'b00,cur_aseconds,1'b0,cur_aframes} >= cuep_dout[22:0]) begin
 								cur_frames <= cur_frames + 7'h1;
 								if (cur_frames == 7'd74) begin
@@ -1528,7 +1646,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 		end
 	end
 
-	if (wet && ain[23:8]==24'hdfff) begin // restrict to lower 0-3f?
+		if (wet && ain[23:8]==24'hdfff) begin // restrict to lower 0-3f?
 		if (ain[5:2]==4'h0) begin  // BUTCH ICR
 			if (!ewe2l) begin
 				butch_reg[4'h0][31:16] <= din[31:16];
@@ -1544,7 +1662,10 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			butch_reg[ain[5:2]][15:0] <= din[15:0];
 		end
 		if (ain[5:2]==4'h4) begin  // I2SCTRL
-			if (!ewe0l && din[2] && !play && seek==0 && splay==0) begin
+			// Data-mode BIOS flows use bit 2 as the streaming gate. Only let
+			// that gate auto-start transport in CD-ROM mode, and only on a
+			// 0->1 transition so audio-path writes do not retrigger playback.
+			if (!ewe0l && cdrommd && din[2] && !butch_reg[4][2] && !play && seek==0 && splay==0) begin
 				splay <= 5'h15;
 			end
 		end
@@ -1552,15 +1673,17 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			// DSA info came from later spec. Some of these may be wrong/missing/unsupported for the Jag.
 			last_ds <= din[15:0];
 			unhandled <= 1'b1;
+			play_title_pending_rsp <= 1'b0;
+			title_len_pending_rsp <= 1'b0;
 			if (din[15:8]==8'h01) begin  // Play Title
 				unhandled <= 1'b0;
+				abplay <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
 				butch_reg[0][12] <= 1'b1;
 				ds_resp_idx <= 3'h0;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin
-					butch_reg[0][13] <= 1'b1;
-					ds_resp_size <= 3'h1;
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
+					queue_dsa_error(dsa_presence_error);
 				end else begin
 					butch_reg[0][13] <= 1'b0;
 					ds_resp_size <= 3'h0;
@@ -1618,11 +1741,33 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				seek <= 8'h0;
 				seek_found_pending <= 1'b0;
 				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
 				scan_goto_pending <= 1'b0;
 				abplay <= 1'b0;
 				abseek <= 8'h0;
+				clear_dsa_runtime_events();
+				subcode_irq_pending <= 1'b0;
+				frame_irq_pending <= 1'b0;
+				sub_chunk_count <= 8'h0F;
+				subidx <= 4'h0;
+				recrc <= 1'b1;
 				leadout_title_pending <= 1'b0;
 				leadout_seen <= 1'b0;
+				track_idx <= 7'h1;
+				cur_frames <= 7'h0;
+				cur_seconds <= 6'h0;
+				cur_minutes <= 7'h0;
+				cur_rframes <= 7'h0;
+				cur_rseconds <= 6'h0;
+				cur_rminutes <= 7'h0;
+				cur_aframes <= 7'h0;
+				cur_aseconds <= 6'h0;
+				cur_aminutes <= 7'h0;
+				aud_add <= 30'h0;
+				cues_addr <= 7'h1;
+				cuet_addr <= 7'h1;
+				updabs_req <= 1'b0;
+				updabs <= 1'b0;
 				clear_audio_transport();
 				pause <= 1'b0;
 				pause_mode_indicator <= 1'b0;
@@ -1636,10 +1781,61 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin  // No disc / TOC not ready
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
+					queue_dsa_error(dsa_presence_error);
 				end else if ((dsa_req_session >= dsa_visible_session_count) || !dsa_req_sess_valid) begin
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
+					// TOC read leaves the drive paused at the first track of the
+					// requested session, but does not alter the pause-mode indicator.
+					clear_dsa_runtime_events();
+					play_title_pending_rsp <= 1'b0;
+					title_len_pending_rsp <= 1'b0;
+					play <= 1'b0;
+					stop <= play;
+					stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+					seek <= 8'h0;
+					seek_found_pending <= 1'b0;
+					goto_found_pending_rsp <= 1'b0;
+					ab_found_pending_rsp <= 1'b0;
+					scan_goto_pending <= 1'b0;
+					abplay <= 1'b0;
+					abseek <= 8'h0;
+					subcode_irq_pending <= 1'b0;
+					frame_irq_pending <= 1'b0;
+					sub_chunk_count <= 8'h0F;
+					subidx <= 4'h0;
+					recrc <= 1'b1;
+					atti_report_valid <= 1'b0;
+					atti_force_full_update <= 1'b0;
+					atti_evt_title_pending <= 1'b0;
+					atti_evt_index_pending <= 1'b0;
+					atti_evt_rel_minutes_pending <= 1'b0;
+					atti_evt_rel_seconds_pending <= 1'b0;
+					atti_evt_abs_minutes_pending <= 1'b0;
+					atti_evt_abs_seconds_pending <= 1'b0;
+					leadout_title_pending <= 1'b0;
+					leadout_seen <= 1'b0;
+					clear_audio_transport();
+					pause <= 1'b0;
+					spinpause <= 1'b1;
+					splay <= 5'h15;
+					cur_samples <= 10'h0;
+					cur_frames <= 7'h0;
+					cur_seconds <= 6'h0;
+					cur_minutes <= 7'h0;
+					cur_rframes <= 7'h0;
+					cur_rseconds <= 6'h0;
+					cur_rminutes <= 7'h0;
+					cur_aframes <= 7'h0;
+					cur_aseconds <= 6'h0;
+					cur_aminutes <= 7'h0;
+					gframes <= 3'h0;
+					aud_add <= 30'h0;
+					track_idx <= dsa_req_first_track;
+					cues_addr <= dsa_req_first_track;
+					cuet_addr <= dsa_req_first_track;
+					updabs_req <= 1'b1;
+
 					/* first track number */
 					ds_resp[0] <= 32'h2000 | dsa_req_first_track;
 					/* last track number */
@@ -1678,32 +1874,36 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				goto_found_pending_rsp <= 1'b0;
 				spinpause <= 1'b0;
 			end
-			if (din[15:8]==8'h09) begin  // Get Title Length - not implemented (only for data CDs?)
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h09) begin  // Get Title Length
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h0900 | cuel_dout[7:0];  // needs to wait for data and convert to lba from time format
-				ds_resp[1] <= 32'h0A00 | cuel_dout[15:8]; // needs to wait for data and convert to lba from time format
 				ds_resp_idx <= 3'h0;
-				ds_resp_size <= 3'h2;
 				ds_resp_loop <= 7'h0;
-//				cuel_add <= din[6:0];
-				cues_addr <= din[6:0];
+				if (!dsa_disc_ready) begin
+					queue_dsa_error(dsa_presence_error);
+				end else if ((din[6:0] == 7'h00) || (din[6:0] > aud_tracks)) begin
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
+				end else begin
+					butch_reg[0][13] <= 1'b0;
+					ds_resp_size <= 3'h0;
+					cues_addr <= din[6:0];
+					title_len_pending_rsp <= 1'b1;
+				end
 			end
-			if (din[15:8]==8'h0A) begin  // Reserved
+			if (din[15:8]==8'h0A) begin  // Open Tray
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_CMD;
+				ds_resp[0] <= 32'h0C00;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 			end
-			if (din[15:8]==8'h0B) begin  // Reserved
+			if (din[15:8]==8'h0B) begin  // Close Tray
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_CMD;
+				ds_resp[0] <= 32'h0D00;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
@@ -1711,18 +1911,14 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (din[15:8]==8'h0C) begin  // Reserved
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_CMD;
-				ds_resp_idx <= 3'h0;
-				ds_resp_size <= 3'h1;
-				ds_resp_loop <= 7'h0;
+				queue_dsa_error(DSA_ERR_ILLEGAL_CMD);
 			end
-			if (din[15:8]==8'h0D) begin  // Get Complete Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h0D) begin  // Get Complete Time
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h1400 | cur_minutes[6:0]; // needs to wait for next change
-				ds_resp[1] <= 32'h1500 | cur_seconds[5:0]; // needs to wait for next change
+				ds_resp[0] <= 32'h1400 | cur_aminutes[6:0];
+				ds_resp[1] <= 32'h1500 | cur_aseconds[5:0];
 				ds_resp[2] <= 32'h1600 | cur_aframes[6:0]; // needs to wait for next change
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h3;
@@ -1734,9 +1930,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_idx <= 3'h0;
 				ds_resp_loop <= 7'h0;
 				if (din[6:0] > 7'd99) begin
-					butch_reg[0][13] <= 1'b1;
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
-					ds_resp_size <= 3'h1;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
 					ds_resp_size <= 3'h0;
 					goto_minutes <= din[6:0];
@@ -1749,9 +1943,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_idx <= 3'h0;
 				ds_resp_loop <= 7'h0;
 				if (din[5:0] > 6'd59) begin
-					butch_reg[0][13] <= 1'b1;
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
-					ds_resp_size <= 3'h1;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
 					ds_resp_size <= 3'h0;
 					goto_seconds <= din[5:0];
@@ -1760,20 +1952,18 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			end
 			if (din[15:8]==8'h12) begin  // 0x10 Goto ABS Frame
 				unhandled <= 1'b0;
+				abplay <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				ds_resp_idx <= 3'h0;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin
-					butch_reg[0][13] <= 1'b1;
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
-					ds_resp_size <= 3'h1;
+					queue_dsa_error(dsa_presence_error);
 					seek_found_pending <= 1'b0;
 					goto_found_pending_rsp <= 1'b0;
 					scan_goto_pending <= 1'b0;
 				end else if ((goto_minutes > 7'd99) || (goto_seconds > 6'd59) || (din[6:0] > 7'd74) || goto_target_past_leadout) begin
-					butch_reg[0][13] <= 1'b1;
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
-					ds_resp_size <= 3'h1;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 					seek_found_pending <= 1'b0;
 					goto_found_pending_rsp <= 1'b0;
 					scan_goto_pending <= 1'b0;
@@ -1784,6 +1974,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 					butch_reg[0][13] <= 1'b0;
 					ds_resp_size <= 3'h1;
 					seek_found_pending <= 1'b1;
+					scan_goto_pending <= interactive_scan_context;
+					clear_dsa_seek_events();
 					scan_goto_pending <= interactive_scan_context;
 					subcode_irq_pending <= 1'b0;
 					frame_irq_pending <= 1'b0;
@@ -1807,13 +1999,9 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
 				ds_resp_idx <= 3'h0;
 				if (!dsa_disc_ready) begin  // No disc / TOC not ready
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
-					ds_resp_size <= 3'h1;
-					ds_resp_loop <= 7'h0;
+					queue_dsa_error(dsa_presence_error);
 				end else if ((dsa_req_session >= dsa_visible_session_count) || !dsa_req_sess_valid) begin
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
-					ds_resp_size <= 3'h1;
-					ds_resp_loop <= 7'h0;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
 					ds_resp[0] <= 32'h6000;
 					ds_resp[1] <= 32'h6100;
@@ -1871,37 +2059,41 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				end
 				i2s3w <= 1'b1;
 			end
-			if (din[15:8]==8'h16) begin  // Get Last Error - No errors - Untested
+			if (din[15:8]==8'h16) begin  // Get Last Error
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h400; // | error[7:0];
+				ds_resp[0] <= 32'h0400 | dsa_last_error;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 			end
-			if (din[15:8]==8'h17) begin  // Clear Error - No errors - Untested
+			if (din[15:8]==8'h17) begin  // Clear Error
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				ds_resp[0] <= 32'h400;
+				ds_resp[0] <= 32'h0400;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
+				dsa_last_error <= 8'h00;
 			end
 			if (din[15:8]==8'h18) begin  // Spin Up
 				unhandled <= 1'b0;
+				abplay <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
 				butch_reg[0][12] <= 1'b1;
 				butch_reg[0][13] <= 1'b1;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
+					queue_dsa_error(dsa_presence_error);
 				end else if (!dsa_spin_req_sess_valid || (dsa_spin_req_first_track == 7'h00)) begin
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
-					ds_resp[0] <= 32'h0100 | 32'h0043;
+					ds_resp[0] <= 32'h0100;
+					clear_dsa_seek_events();
 					subcode_irq_pending <= 1'b0;
 					frame_irq_pending <= 1'b0;
 					sub_chunk_count <= 8'h0F;
@@ -1929,58 +2121,129 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 					updabs_req <= 1'b1;
 				end
 			end
-			if (din[15:8]==8'h20) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h20) begin  // Play A Time To B Time Start Min
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				// No response
-				//butch_reg[0][13] <= 1'b1; // |= 0x2000
+				clear_dsa_runtime_events();
+				play <= 1'b0;
+				stop <= play;
+				stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+				seek <= 8'h0;
+				seek_found_pending <= 1'b0;
+				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
+				abplay <= 1'b0;
 				abaminutes <= din[6:0];
 			end
-			if (din[15:8]==8'h21) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h21) begin  // Play A Time To B Time Start Sec
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				// No response
-				//butch_reg[0][13] <= 1'b1; // |= 0x2000
+				clear_dsa_runtime_events();
+				play <= 1'b0;
+				stop <= play;
+				stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+				seek <= 8'h0;
+				seek_found_pending <= 1'b0;
+				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
+				abplay <= 1'b0;
 				abaseconds <= din[5:0];
 			end
-			if (din[15:8]==8'h22) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h22) begin  // Play A Time To B Time Start Frame
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				// No response
-				//butch_reg[0][13] <= 1'b1; // |= 0x2000
+				clear_dsa_runtime_events();
+				play <= 1'b0;
+				stop <= play;
+				stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+				seek <= 8'h0;
+				seek_found_pending <= 1'b0;
+				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
+				abplay <= 1'b0;
 				abaframes <= din[6:0];
 			end
-			if (din[15:8]==8'h23) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h23) begin  // Play A Time To B Time Stop Min
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				// No response
-				//butch_reg[0][13] <= 1'b1; // |= 0x2000
+				clear_dsa_runtime_events();
+				play <= 1'b0;
+				stop <= play;
+				stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+				seek <= 8'h0;
+				seek_found_pending <= 1'b0;
+				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
+				abplay <= 1'b0;
 				abbminutes <= din[6:0];
 			end
-			if (din[15:8]==8'h24) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h24) begin  // Play A Time To B Time Stop Sec
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				// No response
-				//butch_reg[0][13] <= 1'b1; // |= 0x2000
+				clear_dsa_runtime_events();
+				play <= 1'b0;
+				stop <= play;
+				stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+				seek <= 8'h0;
+				seek_found_pending <= 1'b0;
+				goto_found_pending_rsp <= 1'b0;
+				ab_found_pending_rsp <= 1'b0;
+				abplay <= 1'b0;
 				abbseconds <= din[5:0];
 			end
-			if (din[15:8]==8'h25) begin  // Play A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h25) begin  // Play A Time To B Time Stop Frame / Commit
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000 // too fast - wait for seek time
-				ds_resp[0] <= 32'h0144; // should be done on seek found
 				ds_resp_idx <= 3'h0;
-				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
-				abbframes <= din[6:0];
-				cues_addr <= num_tracks + 7'h1;
-				cuet_addr <= num_tracks + 7'h1;
-				abseek <= 8'hFF;
-				stop <= 1'b0;
-				spinpause <= 1'b0;
+				if (!dsa_disc_ready) begin
+					queue_dsa_error(dsa_presence_error);
+					seek_found_pending <= 1'b0;
+					goto_found_pending_rsp <= 1'b0;
+					ab_found_pending_rsp <= 1'b0;
+					abplay <= 1'b0;
+				end else if ((abaminutes > 7'd99) || (abaseconds > 6'd59) || (abaframes > 7'd74) ||
+				             (abbminutes > 7'd99) || (abbseconds > 6'd59) || (din[6:0] > 7'd74) ||
+				             (ab_start_packed > ab_end_packed_next) ||
+				             (ab_start_packed >= dsa_disc_leadout_packed) ||
+				             (ab_end_packed_next >= dsa_disc_leadout_packed)) begin
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
+					seek_found_pending <= 1'b0;
+					goto_found_pending_rsp <= 1'b0;
+					ab_found_pending_rsp <= 1'b0;
+					abplay <= 1'b0;
+				end else begin
+					butch_reg[0][13] <= 1'b0;
+					ds_resp_size <= 3'h1;
+					abbframes <= din[6:0];
+					abplay <= 1'b1;
+					abseek <= 8'hFF;
+					ab_found_pending_rsp <= 1'b1;
+					goto_found_pending_rsp <= 1'b0;
+					scan_goto_pending <= 1'b0;
+					clear_dsa_seek_events();
+					ab_found_pending_rsp <= 1'b1;
+					subcode_irq_pending <= 1'b0;
+					frame_irq_pending <= 1'b0;
+					sub_chunk_count <= 8'h0F;
+					subidx <= 4'h0;
+					recrc <= 1'b1;
+					leadout_title_pending <= 1'b0;
+					leadout_seen <= 1'b0;
+					sminutes <= abaminutes;
+					sseconds <= abaseconds;
+					sframes <= abaframes;
+					seek_delay_set <= goto_seek_delay_cycles(ab_start_delta_frames, cd_latency_en);
+					cues_addr <= num_tracks + 7'h1;
+					cuet_addr <= num_tracks + 7'h1;
+					seek <= 8'hFF;
+					seek_found_pending <= 1'b1;
+					stop <= 1'b0;
+					spinpause <= 1'b0;
+				end
 			end
-			if (din[15:8]==8'h26) begin  // Release A Time To B Time - not implemented
-				unhandled <= 1'b1;
+			if (din[15:8]==8'h26) begin  // Release A Time To B Time
+				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 				butch_reg[0][13] <= 1'b1; // |= 0x2000 // too fast - wait for seek time
 				ds_resp[0] <= 32'h2600;
@@ -1988,6 +2251,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 				abplay <= 1'b0;
+				abseek <= 8'h0;
+				ab_found_pending_rsp <= 1'b0;
 			end
 			if (din[15:8]==8'h30) begin  // Get Disc identifiers - not implemented
 				unhandled <= 1'b1;
@@ -1996,8 +2261,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_idx <= 3'h0;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
-					ds_resp_size <= 3'h1;
+					queue_dsa_error(dsa_presence_error);
 				end else begin
 					ds_resp[0] <= 32'h3000 | dsa_disc_id0;
 					ds_resp[1] <= 32'h3100 | dsa_disc_id1;
@@ -2010,11 +2274,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if ((din[15:8] >= 8'h40) && (din[15:8] <= 8'h44)) begin  // Reserved
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1;
-				butch_reg[0][13] <= 1'b1;
-				ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_CMD;
-				ds_resp_idx <= 3'h0;
-				ds_resp_size <= 3'h1;
-				ds_resp_loop <= 7'h0;
+				queue_dsa_error(DSA_ERR_ILLEGAL_CMD);
 			end
 			if (din[15:8]==8'h50) begin  // Get Disc Status
 				unhandled <= 1'b0;
@@ -2042,7 +2302,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
 				if (!dsa_disc_ready) begin
-					ds_resp[0] <= 32'h0400 | dsa_presence_error;
+					queue_dsa_error(dsa_presence_error);
 				end else begin
 					ds_resp[0] <= 32'h5400 | dsa_visible_session_count;
 				end
@@ -2066,7 +2326,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				if (dsa_dac_mode_valid) begin
 					ds_resp[0] <= 32'h7000 | din[7:0];
 				end else begin
-					ds_resp[0] <= 32'h0400 | DSA_ERR_ILLEGAL_VALUE;
+					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end
 				//0 reserved
 				//1 I2S - FS mode (default) DAC mode
@@ -2080,6 +2340,11 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				//9 Sony 18 bit 4 FS        DAC mode
 				//81 I2S - CD-ROM mode      CD-ROM mode
 				//82 EIAJ CD-ROM mode       CD-ROM mode
+			end
+			if ((din[15:8] >= 8'hF0) && (din[15:8] <= 8'hF4)) begin
+				unhandled <= 1'b0;
+				butch_reg[0][12] <= 1'b1;
+				queue_dsa_error(DSA_ERR_ILLEGAL_CMD);
 			end
 			//    0xa0-0xaf User Define (???)
 			//    0xf0 Service
