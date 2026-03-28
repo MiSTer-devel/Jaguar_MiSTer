@@ -64,6 +64,7 @@ localparam [7:0] DSA_ERR_ILLEGAL_CMD   = 8'h22;
 localparam [7:0] DSA_ERR_ILLEGAL_VALUE = 8'h29;
 localparam [19:0] DSA_STATUS_SETTLE_CYCLES = 20'd262143;
 localparam [2:0] STOP_FLUSH_WS_COUNT = 3'd4;
+localparam [15:0] DATA_WAIT_TIMEOUT = 16'hFFFF;
 //BUTCH     equ  $DFFF00	; base of Butch=interrupt control register, R/W
 //DSCNTRL   equ  BUTCH+4	; DSA control register, R/W
 //DS_DATA   equ  BUTCH+$A	; DSA TX/RX data, R/W
@@ -319,7 +320,7 @@ assign hackbus = 1'b0;//cd_en && aud_sess && (ain[23:8]==16'h002C) && hackwait;
 //assign hackbus1 = cd_en && aud_sess && (({ain[23:2],2'b00}==24'h050DF4) || ({ain[23:1],1'b0}==24'h050E8A) || ({ain[23:1],1'b0}==24'h050E8C)) && hackwait;
 assign hackbus1 = dohacks && cd_en && aud_sess && (({ain[23:2],2'b00}==24'h050DF4)) && hackwait;
 assign hackbus2 = 1'b0;//cd_en && aud_sess && (({ain[23:1],1'b0}==24'h050EC0)) && hackwait;
-assign override = cdbios && cd_en && (ain[23:18] == 6'b100000);
+assign override = cdbios && cd_en;
 assign doe = cd_en && oet && (breg);// || (!cdbios && caddr)); // not sure how mirroring applies or if reading is sometimes disabled - probably disabled when cdbios is disabled to allow cart pass through for >=4MB
 assign dout[31:0] = (aeven) ? dout_t[31:0] : {dout_t[15:0],dout_t[15:0]};
 wire [31:0] dout_t = doe_ds ? ds_resp[ds_resp_idx] : doe_sub ? {subresp,subresp} : doe_fif ? cur_i2s_fifo : butch_reg[ain[5:2]];
@@ -389,7 +390,6 @@ reg valid;
 reg [15:0] sdin;
 reg [15:0] sdin3;
 reg [15:0] sdin4;
-reg mounted;
 reg spinpause;
 reg pause;
 reg pause_mode_indicator;
@@ -431,6 +431,10 @@ reg play_title_pending_rsp;
 reg [6:0] play_title_pending_track;
 reg title_len_pending_rsp;
 reg ab_found_pending_rsp;
+reg toc_read_pending_rsp;
+reg [7:0] toc_read_pending_session;
+reg spin_up_pending_rsp;
+reg [7:0] spin_up_pending_session;
 reg goto_found_pending_rsp;
 reg scan_goto_pending;
 reg leadout_title_pending;
@@ -468,6 +472,8 @@ reg [2:0] stop_flush_ws;
 reg overflow;
 reg underflow;
 reg errflow;
+reg data_wait_pending;
+reg [15:0] data_wait_cycles;
 reg unhandled;
 assign overflowo = overflow;
 assign underflowo = underflow;
@@ -511,6 +517,8 @@ begin
 	overflow <= 1'b0;
 	underflow <= 1'b0;
 	errflow <= 1'b0;
+	data_wait_pending <= 1'b0;
+	data_wait_cycles <= 16'h0000;
 	i2s1w <= 1'b1;
 	i2s2w <= 1'b1;
 	sdin[15:0] <= 16'h0;
@@ -528,6 +536,8 @@ begin
 	sub_chunk_count <= 8'h0F;
 	subidx <= 4'h0;
 	recrc <= 1'b1;
+	data_wait_pending <= 1'b0;
+	data_wait_cycles <= 16'h0000;
 	atti_report_valid <= 1'b0;
 	atti_force_full_update <= 1'b0;
 	atti_evt_title_pending <= 1'b0;
@@ -551,6 +561,8 @@ begin
 	sub_chunk_count <= 8'h0F;
 	subidx <= 4'h0;
 	recrc <= 1'b1;
+	data_wait_pending <= 1'b0;
+	data_wait_cycles <= 16'h0000;
 	atti_evt_title_pending <= 1'b0;
 	atti_evt_index_pending <= 1'b0;
 	atti_evt_rel_minutes_pending <= 1'b0;
@@ -642,6 +654,12 @@ wire [6:0] dsa_req_last_track = dsa_req_sess_valid ? dsa_sess_last_track[dsa_req
 wire [23:0] dsa_req_leadout = dsa_req_sess_valid ? dsa_sess_leadout[dsa_req_session] : 24'h0;
 wire dsa_spin_req_sess_valid = (dsa_spin_req_session < DSA_MAX_SESSIONS) ? dsa_sess_valid[dsa_spin_req_session] : 1'b0;
 wire [6:0] dsa_spin_req_first_track = dsa_spin_req_sess_valid ? dsa_sess_first_track[dsa_spin_req_session] : 7'h0;
+wire dsa_toc_pending_sess_valid = (toc_read_pending_session < DSA_MAX_SESSIONS) ? dsa_sess_valid[toc_read_pending_session] : 1'b0;
+wire [6:0] dsa_toc_pending_first_track = dsa_toc_pending_sess_valid ? dsa_sess_first_track[toc_read_pending_session] : 7'h0;
+wire [6:0] dsa_toc_pending_last_track = dsa_toc_pending_sess_valid ? dsa_sess_last_track[toc_read_pending_session] : 7'h0;
+wire [23:0] dsa_toc_pending_leadout = dsa_toc_pending_sess_valid ? dsa_sess_leadout[toc_read_pending_session] : 24'h0;
+wire dsa_spin_pending_sess_valid = (spin_up_pending_session < DSA_MAX_SESSIONS) ? dsa_sess_valid[spin_up_pending_session] : 1'b0;
+wire [6:0] dsa_spin_pending_first_track = dsa_spin_pending_sess_valid ? dsa_sess_first_track[spin_up_pending_session] : 7'h0;
 function [19:0] msf_to_frames;
 	input [6:0] mins;
 	input [5:0] secs;
@@ -935,7 +953,6 @@ begin
 		sub_chunk_count <= 8'h0F;
 		subcode_irq_pending <= 1'b0;
 		frame_irq_pending <= 1'b0;
-		mounted <= 1'b0;
 		splay <= 5'h0;
 		play <= 1'b0;
 		stop <= 1'b0;
@@ -950,6 +967,8 @@ begin
 		aud_add <= 30'h000000;
 		unhandled <= 1'b0;
 		dsa_last_error <= 8'h00;
+		data_wait_pending <= 1'b0;
+		data_wait_cycles <= 16'h0000;
 		upd_frames <= 1'b0;
 		upd_seconds <= 1'b0;
 		upd_minutes <= 1'b0;
@@ -995,6 +1014,10 @@ begin
 		play_title_pending_rsp <= 1'b0;
 		title_len_pending_rsp <= 1'b0;
 		ab_found_pending_rsp <= 1'b0;
+		toc_read_pending_rsp <= 1'b0;
+		toc_read_pending_session <= 8'h0;
+		spin_up_pending_rsp <= 1'b0;
+		spin_up_pending_session <= 8'h0;
 		play_title_pending_track <= 7'h0;
 		goto_found_pending_rsp <= 1'b0;
 		scan_goto_pending <= 1'b0;
@@ -1025,7 +1048,6 @@ begin
 	end
 	if (toc_wr) begin
 		if (toc_addr == 10'h008) begin
-			mounted <= 1'b0;
 			dsa_sess_count_toc <= 8'h0;
 			toc_ready <= 1'b0;
 			toc_done_pending <= 1'b0;
@@ -1038,6 +1060,8 @@ begin
 			track_idx <= 7'h1;
 			unhandled <= 1'b0;
 			dsa_last_error <= 8'h00;
+			data_wait_pending <= 1'b0;
+			data_wait_cycles <= 16'h0000;
 			play <= 1'b0;
 			stop <= 1'b0;
 			stop_flush_ws <= 3'h0;
@@ -1069,6 +1093,10 @@ begin
 			play_title_pending_rsp <= 1'b0;
 			title_len_pending_rsp <= 1'b0;
 			ab_found_pending_rsp <= 1'b0;
+			toc_read_pending_rsp <= 1'b0;
+			toc_read_pending_session <= 8'h0;
+			spin_up_pending_rsp <= 1'b0;
+			spin_up_pending_session <= 8'h0;
 			goto_found_pending_rsp <= 1'b0;
 			scan_goto_pending <= 1'b0;
 			atti_report_valid <= 1'b0;
@@ -1221,6 +1249,109 @@ begin
 		ds_resp_loop <= 7'h0;
 		title_len_pending_rsp <= 1'b0;
 	end
+	if (toc_read_pending_rsp && (toc_ready || !cd_ex) && (ds_resp_size == 3'h0) && !ds_a) begin
+		butch_reg[0][12] <= 1'b1;
+		butch_reg[0][13] <= 1'b1;
+		ds_resp_idx <= 3'h0;
+		ds_resp_loop <= 7'h0;
+		if (!cd_ex) begin
+			queue_dsa_error(DSA_ERR_FOCUS_NO_DISC);
+		end else if ((toc_read_pending_session >= dsa_visible_session_count) || !dsa_toc_pending_sess_valid) begin
+			queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
+		end else begin
+			clear_dsa_runtime_events();
+			play_title_pending_rsp <= 1'b0;
+			title_len_pending_rsp <= 1'b0;
+			play <= 1'b0;
+			stop <= play;
+			stop_flush_ws <= play ? STOP_FLUSH_WS_COUNT : 3'h0;
+			seek <= 8'h0;
+			seek_found_pending <= 1'b0;
+			goto_found_pending_rsp <= 1'b0;
+			ab_found_pending_rsp <= 1'b0;
+			scan_goto_pending <= 1'b0;
+			abplay <= 1'b0;
+			abseek <= 8'h0;
+			subcode_irq_pending <= 1'b0;
+			frame_irq_pending <= 1'b0;
+			sub_chunk_count <= 8'h0F;
+			subidx <= 4'h0;
+			recrc <= 1'b1;
+			atti_report_valid <= 1'b0;
+			atti_force_full_update <= 1'b0;
+			atti_evt_title_pending <= 1'b0;
+			atti_evt_index_pending <= 1'b0;
+			atti_evt_rel_minutes_pending <= 1'b0;
+			atti_evt_rel_seconds_pending <= 1'b0;
+			atti_evt_abs_minutes_pending <= 1'b0;
+			atti_evt_abs_seconds_pending <= 1'b0;
+			leadout_title_pending <= 1'b0;
+			leadout_seen <= 1'b0;
+			clear_audio_transport();
+			pause <= 1'b0;
+			spinpause <= 1'b1;
+			splay <= 5'h15;
+			cur_samples <= 10'h0;
+			cur_frames <= 7'h0;
+			cur_seconds <= 6'h0;
+			cur_minutes <= 7'h0;
+			cur_rframes <= 7'h0;
+			cur_rseconds <= 6'h0;
+			cur_rminutes <= 7'h0;
+			cur_aframes <= 7'h0;
+			cur_aseconds <= 6'h0;
+			cur_aminutes <= 7'h0;
+			gframes <= 3'h0;
+			aud_add <= 30'h0;
+			track_idx <= dsa_toc_pending_first_track;
+			cues_addr <= dsa_toc_pending_first_track;
+			cuet_addr <= dsa_toc_pending_first_track;
+			updabs_req <= 1'b1;
+			ds_resp[0] <= 32'h2000 | dsa_toc_pending_first_track;
+			ds_resp[1] <= 32'h2100 | dsa_toc_pending_last_track;
+			ds_resp[2] <= 32'h2200 | dsa_toc_pending_leadout[22:16];
+			ds_resp[3] <= 32'h2300 | dsa_toc_pending_leadout[13:8];
+			ds_resp[4] <= 32'h2400 | dsa_toc_pending_leadout[6:0];
+			ds_resp_size <= 3'h5;
+		end
+		toc_read_pending_rsp <= 1'b0;
+	end
+	if (spin_up_pending_rsp && (toc_ready || !cd_ex) && (ds_resp_size == 3'h0) && !ds_a) begin
+		butch_reg[0][12] <= 1'b1;
+		butch_reg[0][13] <= 1'b1;
+		ds_resp_idx <= 3'h0;
+		ds_resp_size <= 3'h1;
+		ds_resp_loop <= 7'h0;
+		if (!cd_ex) begin
+			queue_dsa_error(DSA_ERR_FOCUS_NO_DISC);
+		end else if (!dsa_spin_pending_sess_valid || (dsa_spin_pending_first_track == 7'h00)) begin
+			queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
+		end else begin
+			ds_resp[0] <= 32'h0100;
+			clear_dsa_seek_events();
+			subcode_irq_pending <= 1'b0;
+			frame_irq_pending <= 1'b0;
+			sub_chunk_count <= 8'h0F;
+			subidx <= 4'h0;
+			recrc <= 1'b1;
+			leadout_title_pending <= 1'b0;
+			leadout_seen <= 1'b0;
+			spinpause <= 1'b1;
+			splay <= 5'h15;
+			stop <= 1'b0;
+			aud_add <= 30'h0;
+			track_idx <= dsa_spin_pending_first_track;
+			cur_samples <= 10'h0;
+			cur_rframes <= 7'h0;
+			cur_rseconds <= 6'h2;
+			cur_rminutes <= 7'h0;
+			gframes <= 3'h0;
+			cues_addr <= dsa_spin_pending_first_track;
+			cuet_addr <= dsa_spin_pending_first_track;
+			updabs_req <= 1'b1;
+		end
+		spin_up_pending_rsp <= 1'b0;
+	end
 	if (goto_found_pending_rsp && (ds_resp_size <= 3'h1) && !ds_a && !butch_reg[0][13]) begin
 		butch_reg[0][12] <= 1'b1;
 		butch_reg[0][13] <= 1'b1;
@@ -1343,6 +1474,11 @@ begin
 					aud_rd <= 1'b1;
 				end else if ((seek_delay == 31'h1) && aud_cbusy && !pause_mode_indicator) begin
 					seek_delay <= 31'h1;
+				end else if ((seek_delay == 31'h1) && cdrommd && !pause_mode_indicator && !cd_valid) begin
+					seek_delay <= 31'h1;
+					if (!aud_busy && !aud_cbusy) begin
+						aud_rd <= 1'b1;
+					end
 				end else if (seek_delay == 31'h1) begin
 					seek[0] <= 1'b0;
 					// *2352=<<11 + <<8 + <<5 + <<4
@@ -1443,13 +1579,17 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				end
 			end else if (splay[3:0] == 4'h4) begin
 				if (!aud_busy && !aud_cbusy) begin
-					fd <= 64'h0;
-					fifo[1] <= 'h0;
-					fifo[0] <= 'h0;
-					if (!splay[4]) begin
-						splay <= 5'h0; // Does this work? Seems like it might skip the first read when splay called again later. Where is transition to play if not here?
+					if (splay[4] && cdrommd && !cd_valid) begin
+						aud_rd <= 1'b1;
 					end else begin
-						splay <= 5'h3;
+						fd <= 64'h0;
+						fifo[1] <= 'h0;
+						fifo[0] <= 'h0;
+						if (!splay[4]) begin
+							splay <= 5'h0; // Does this work? Seems like it might skip the first read when splay called again later. Where is transition to play if not here?
+						end else begin
+							splay <= 5'h3;
+						end
 					end
 				end
 			end else begin
@@ -1493,66 +1633,89 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				end else begin
 					i2s1w <= !wsout;
 					i2s2w <= wsout;
-					fdata[15:0] = fd[15:0];
-					fd <= {16'h0,fd[63:16]};
-					sdin[15:0] <= (gframes[2:1] != 2'h0) ? 16'h0 : fdata[15:0];
-					if (i2s_fifo_enabled && faddr[0] == 1'b0) begin
-						i2s_fifo[i2s_wfifopos[3:0]][15:0] <= (gframes != 3'h0) ? 16'h0 : fdata[15:0];
-					end
-					if (i2s_fifo_enabled && faddr[0] == 1'b1) begin
-						i2s_fifo[i2s_wfifopos[3:0]][31:16] <= (gframes != 3'h0) ? 16'h0 : fdata[15:0];
-						i2s_wfifopos <= i2s_wfifopos + 5'h1;
-						if (i2s_wfifopos == (i2s_rfifopos ^ 5'h10)) begin // fifo overflow
-							i2s_rfifopos <= i2s_rfifopos + 4'h1;
-							overflow <= 1'b1;
-						end
-					end
-					if (gframes != 3'h0) begin
-						fd <= 64'h0;
-						valid <= 1'b0;
-					end
-					if ((faddr[1:0] == 2'b01) && (gframes[2:1] == 2'h0)) begin // handles throwing away first 16 bit value and using fifth in its place (plus endian/ordering nonsense)
-						fd[15:0] <= {fifo[1][23:16],fifo[1][31:24]}; // use next fifo; replaces current set below
-//						fd[15:0] <= {fifo[0][23:16],fifo[0][31:24]}; // use next fifo; replaces current set below
-					end
-					if ((faddr[1:0] == 2'b11) && (gframes == 3'h0)) begin //Assumes fifo filled before first entrance and next fifo data already pointed at.
-						fd <= {fifo[1][39:32],fifo[1][47:40], fifo[1][23:16],fifo[1][31:24], fifo[1][07:00],fifo[1][15:8], fifo[1][55:48],fifo[1][63:56]}; // endian/ordering nonsense
-//						fd <= {fifo[0][39:32],fifo[0][47:40], fifo[0][23:16],fifo[0][31:24], fifo[0][07:00],fifo[0][15:8], fifo[0][55:48],fifo[0][63:56]}; // endian/ordering nonsense
-						fifo[1] <= fifo[0]; // is this cache necessary or can directly use 0?
-						fifo[0] <= aud_in;
-//					if (aud_in != aud_cmp) begin
-//						underflow <= 1'b1;
-//					end
-						if ({cur_aminutes,2'b00,cur_aseconds,1'b0,cur_aframes} < cuep_dout[22:0]) begin
-							fifo[1] <= 64'h0;
-							fifo[0] <= 64'h0;
-						end else if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} >= cuelast[22:0]) begin
-							aud_add <= aud_add + 4'h8;
-							if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} > cuelast[22:0]) begin
-								fifo[0] <= 64'h0;
-								aud_add[29:0] <= 30'h0;
-								cuet_addr <= track_idx + 7'h1;
-//					end else if (aud_in != aud_cmp) begin
-					end else if (!cd_valid) begin
+					if (data_wait_pending) begin
+						sdin[15:0] <= 16'h0;
 						underflow <= 1'b1;
-							end
-							if ({cur_samples[9:1],1'b0} == 10'd586) begin
-								aud_add[29:0] <= 30'h0;
-								cuet_addr <= track_idx + 7'h1;
-							end
+						if (data_wait_cycles != DATA_WAIT_TIMEOUT) begin
+							data_wait_cycles <= data_wait_cycles + 16'h1;
 						end else begin
-							aud_add <= aud_add + 4'h8;
-//					if (aud_in != aud_cmp) begin
-					if (!cd_valid) begin
+							errflow <= 1'b1;
+						end
+						if (cd_valid) begin
+							data_wait_pending <= 1'b0;
+							data_wait_cycles <= 16'h0000;
+						end else if (!aud_busy && !aud_cbusy) begin
+							aud_rd <= 1'b1;
+						end
+					end else if ((faddr[1:0] == 2'b11) && (gframes == 3'h0) && !cd_valid) begin
+						sdin[15:0] <= 16'h0;
 						underflow <= 1'b1;
-					end
+						data_wait_pending <= 1'b1;
+						data_wait_cycles <= 16'h0000;
+						if (!aud_busy && !aud_cbusy) begin
+							aud_rd <= 1'b1;
 						end
-						aud_rd <= 1'b1;
-						if (aud_busy) begin
+					end else begin
+						fdata[15:0] = fd[15:0];
+						fd <= {16'h0,fd[63:16]};
+						sdin[15:0] <= (gframes[2:1] != 2'h0) ? 16'h0 : fdata[15:0];
+						if (i2s_fifo_enabled && faddr[0] == 1'b0) begin
+							i2s_fifo[i2s_wfifopos[3:0]][15:0] <= (gframes != 3'h0) ? 16'h0 : fdata[15:0];
+						end
+						if (i2s_fifo_enabled && faddr[0] == 1'b1) begin
+							i2s_fifo[i2s_wfifopos[3:0]][31:16] <= (gframes != 3'h0) ? 16'h0 : fdata[15:0];
+							i2s_wfifopos <= i2s_wfifopos + 5'h1;
+							if (i2s_wfifopos == (i2s_rfifopos ^ 5'h10)) begin // fifo overflow
+								i2s_rfifopos <= i2s_rfifopos + 4'h1;
+								overflow <= 1'b1;
+							end
+						end
+						if (gframes != 3'h0) begin
+							fd <= 64'h0;
+							valid <= 1'b0;
+						end
+						if ((faddr[1:0] == 2'b01) && (gframes[2:1] == 2'h0)) begin // handles throwing away first 16 bit value and using fifth in its place (plus endian/ordering nonsense)
+							fd[15:0] <= {fifo[1][23:16],fifo[1][31:24]}; // use next fifo; replaces current set below
+//							fd[15:0] <= {fifo[0][23:16],fifo[0][31:24]}; // use next fifo; replaces current set below
+						end
+						if ((faddr[1:0] == 2'b11) && (gframes == 3'h0)) begin //Assumes fifo filled before first entrance and next fifo data already pointed at.
+							fd <= {fifo[1][39:32],fifo[1][47:40], fifo[1][23:16],fifo[1][31:24], fifo[1][07:00],fifo[1][15:8], fifo[1][55:48],fifo[1][63:56]}; // endian/ordering nonsense
+//							fd <= {fifo[0][39:32],fifo[0][47:40], fifo[0][23:16],fifo[0][31:24], fifo[0][07:00],fifo[0][15:8], fifo[0][55:48],fifo[0][63:56]}; // endian/ordering nonsense
+							fifo[1] <= fifo[0]; // is this cache necessary or can directly use 0?
+							fifo[0] <= aud_in;
+//						if (aud_in != aud_cmp) begin
 //							underflow <= 1'b1;
+//						end
+							if ({cur_aminutes,2'b00,cur_aseconds,1'b0,cur_aframes} < cuep_dout[22:0]) begin
+								fifo[1] <= 64'h0;
+								fifo[0] <= 64'h0;
+							end else if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} >= cuelast[22:0]) begin
+								aud_add <= aud_add + 4'h8;
+								if ({cur_minutes,2'b00,cur_seconds,1'b0,cur_frames} > cuelast[22:0]) begin
+									fifo[0] <= 64'h0;
+									aud_add[29:0] <= 30'h0;
+									cuet_addr <= track_idx + 7'h1;
+//						end else if (aud_in != aud_cmp) begin
+						end else if (!cd_valid) begin
+							underflow <= 1'b1;
+								end
+								if ({cur_samples[9:1],1'b0} == 10'd586) begin
+									aud_add[29:0] <= 30'h0;
+									cuet_addr <= track_idx + 7'h1;
+								end
+							end else begin
+								aud_add <= aud_add + 4'h8;
+//						if (aud_in != aud_cmp) begin
+						if (!cd_valid) begin
+							underflow <= 1'b1;
 						end
-					end
-					if (wsout) begin
+							end
+							aud_rd <= 1'b1;
+							if (aud_busy) begin
+//								underflow <= 1'b1;
+							end
+						end
+						if (wsout) begin
 						cur_samples <= cur_samples + 10'h1;
 						if ((cur_samples == 10'd48) || (cur_samples == 10'd97) ||
 						    (cur_samples == 10'd146) || (cur_samples == 10'd195) ||
@@ -1636,13 +1799,14 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 								if (cur_aseconds == 6'd59) begin
 									upd_minutes <= 1'b1;
 									cur_aseconds <= 6'h0;
-									cur_aminutes <= cur_aminutes + 7'h1;
-								end
+								cur_aminutes <= cur_aminutes + 7'h1;
 							end
 						end
 					end
+					end
 				end
 			end
+		end
 		end
 	end
 
@@ -1675,6 +1839,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			unhandled <= 1'b1;
 			play_title_pending_rsp <= 1'b0;
 			title_len_pending_rsp <= 1'b0;
+			toc_read_pending_rsp <= 1'b0;
+			spin_up_pending_rsp <= 1'b0;
 			if (din[15:8]==8'h01) begin  // Play Title
 				unhandled <= 1'b0;
 				abplay <= 1'b0;
@@ -1780,8 +1946,13 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
-				if (!dsa_disc_ready) begin  // No disc / TOC not ready
-					queue_dsa_error(dsa_presence_error);
+				if (!cd_ex) begin
+					queue_dsa_error(DSA_ERR_FOCUS_NO_DISC);
+				end else if (!toc_ready) begin
+					butch_reg[0][13] <= 1'b0;
+					ds_resp_size <= 3'h0;
+					toc_read_pending_rsp <= 1'b1;
+					toc_read_pending_session <= din[7:0];
 				end else if ((dsa_req_session >= dsa_visible_session_count) || !dsa_req_sess_valid) begin
 					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
@@ -2087,8 +2258,13 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
 				ds_resp_loop <= 7'h0;
-				if (!dsa_disc_ready) begin
-					queue_dsa_error(dsa_presence_error);
+				if (!cd_ex) begin
+					queue_dsa_error(DSA_ERR_FOCUS_NO_DISC);
+				end else if (!toc_ready) begin
+					butch_reg[0][13] <= 1'b0;
+					ds_resp_size <= 3'h0;
+					spin_up_pending_rsp <= 1'b1;
+					spin_up_pending_session <= din[7:0];
 				end else if (!dsa_spin_req_sess_valid || (dsa_spin_req_first_track == 7'h00)) begin
 					queue_dsa_error(DSA_ERR_ILLEGAL_VALUE);
 				end else begin
@@ -2101,14 +2277,9 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 					recrc <= 1'b1;
 					leadout_title_pending <= 1'b0;
 					leadout_seen <= 1'b0;
-					mounted <= 1'b0;
 					spinpause <= 1'b1;
-//					if (splay != 0 || play) begin
-					if (mounted) begin
-						spinpause <= 1'b0;
-					end
-						splay <= 5'h15;
-						stop <= 1'b0;
+					splay <= 5'h15;
+					stop <= 1'b0;
 					aud_add <= 30'h0;
 					track_idx <= dsa_spin_req_first_track;
 					cur_samples <= 10'h0;
