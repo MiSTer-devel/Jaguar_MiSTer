@@ -194,7 +194,7 @@ assign USER_OUT[5] = 1'b1;
 assign USER_OUT[6] = 1'b1;
 
 assign VGA_SL = 0;
-assign VGA_F1 = 0;
+assign VGA_F1 = vga_field;
 assign VGA_SCALER = 0;
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
@@ -271,22 +271,24 @@ localparam CONF_STR = {
 	"P1O[4],Region Setting,NTSC,PAL;",
 	"P1O[8:7],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"P1O[10:9],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-	"P1O[19:18],Crop,None,Small,Primal;",
-	"P1O[88:87],Visual Area,Fixed w/Crop,Fixed,Active,Original;",
+	// "P1O[19:18],Crop,None,Small,Primal;",
+	"P1O[87],Visual Area,Active,Original;",
 	// "P1O[87],Active Video Crop,Off,On;",
 	// "P1O[88],Fixed Blank Sizes,Off,On;",
 	// Input Options
 	"P2,Input Options;",
 	"P2-;",
-	"P2RM,P1+P2 Pause;",
+	"P2O[85],Numstick,On,Off;",
 	"P2O[83],Keyboard As P1,Off,On;",
 	"P2O[86],Swap P1/P2,Off,On;",
+	"P2-;",
 	"P2O[21:20],Spinner Speed,Normal,Faster,Slow,Slower;",
 	"P2O[33:32],Team Tap,Disabled,JoyPort1,JoyPort2;",
-	"P2O[85],Numstick,Off,On;",
 	"P2O[6:5],Mouse,Disabled,JoyPort1,JoyPort2;",
 	"P2-;",
-	"P2O[41:40],Light Gun,Disabled,Joy1,Joy2,Mouse;",
+	"P2RM,P1+P2 Pause;",
+	"P2-;",
+	//"P2O[41:40],Light Gun,Disabled,Joy1,Joy2,Mouse;",
 //	"DDP2O[43:42],Cross,Small,Medium,Large,None;",
 	// BIOS Menu
 	"P3,Assign BIOS Files;",
@@ -308,7 +310,6 @@ localparam CONF_STR = {
 	"H2P4O[56],Force MemoryTrack,Off,On;",
 	"P4O[55],Force Music CD,Off,On;",
 	"P4O[82],CD Timing,Accurate,Fast;",
-	"P4O[84],Pixel Clock,Legacy,TOM pp;",
 	"P4-;",
 	`ifndef MISTER_DUAL_SDRAM
 	"P4O[36:34],FastRAM1,0,1,2,3,4,5,6,7;",
@@ -405,9 +406,9 @@ bit  [15:0] nvram_hps_din;
 // wire        cd_img_mount = cd_media_change && img_size != 0;
 
 wire ram64;
-wire tapclock = status[28] ? xvclk_o: clk_sys;
+// wire tapclock = status[28] ? xvclk_o: clk_sys;
 wire xvclk_o;
-wire aud_16_eq = 0;
+// wire aud_16_eq = 0;
 wire memtrack;
 wire memtrak_save_mount;
 wire eeprom_save_mount;
@@ -569,13 +570,25 @@ reg old_cmc = 1'b0;
 
 wire cd_mount_prestart = !old_cmc && cd_media_change;
 wire cd_mount_start = old_cmc && !cd_media_change;
-reg cd_mount_start_pending = 0;
+// reg cd_mount_start_pending = 0;
 
 // Initialize the CD unit's internal EEPROM to erased state once at startup.
 // It should persist across disc changes during the session.
 reg [5:0] eep_clear = 6'd0;
 wire eep_clearing = |eep_clear;
 
+reg vga_field = 0;
+always @(posedge clk_sys) begin
+	reg old_vsync = 0;
+	old_vsync <= vga_vs;
+	if (interlaced) begin
+		if (old_vsync && !vga_vs) begin
+			vga_field <= ~vga_field;
+		end
+	end else begin
+		vga_field <= 0;
+	end
+end
 
 always @(posedge clk_sys) begin
 	old_cmc <= cd_media_change;
@@ -588,16 +601,16 @@ always @(posedge clk_sys) begin
 
 	if (cd_mount_prestart) begin
 		cd_loaded <= 1;
-		cd_mount_start_pending <= 1;
+		// cd_mount_start_pending <= 1;
 		cart_mask <= '0;
 		loader_addr <= 32'h0000_0000;
 		// if (~eeprom_save_enabled)
 		// 	eep_clear <= 6'b111111;
 	end
 
-	if (cd_mount_start) begin
-		cd_mount_start_pending <= 0;
-	end
+	// if (cd_mount_start) begin
+	// 	cd_mount_start_pending <= 0;
+	// end
 
 	if (reset && !ioctl_download) begin
 	//	ioctl_wait <= 0;
@@ -607,7 +620,7 @@ always @(posedge clk_sys) begin
 		loader_wr <= 0;
 		loader_en <= 0;
 		loader_addr <= 32'h0000_0000;
-		mismatch <= 0;
+		// mismatch <= 0;
 	end else begin
 		old_download <= ioctl_download;
 
@@ -667,18 +680,18 @@ always @(posedge clk_sys) begin
 	//	if (RESET) ioctl_wait <= 0;
 
 		if (loader_wr)	begin
-			if (be_save[6] && loader_save != DDRAM_DOUT[63:48]) begin
-				mismatch <= 1;
-			end
-			if (be_save[4] && loader_save != DDRAM_DOUT[47:32]) begin
-				mismatch <= 1;
-			end
-			if (be_save[2] && loader_save != DDRAM_DOUT[31:16]) begin
-				mismatch <= 1;
-			end
-			if (be_save[0] && loader_save != DDRAM_DOUT[15:0]) begin
-				mismatch <= 1;
-			end
+			// if (be_save[6] && loader_save != DDRAM_DOUT[63:48]) begin
+			// 	mismatch <= 1;
+			// end
+			// if (be_save[4] && loader_save != DDRAM_DOUT[47:32]) begin
+			// 	mismatch <= 1;
+			// end
+			// if (be_save[2] && loader_save != DDRAM_DOUT[31:16]) begin
+			// 	mismatch <= 1;
+			// end
+			// if (be_save[0] && loader_save != DDRAM_DOUT[15:0]) begin
+			// 	mismatch <= 1;
+			// end
 			loader_save <= loader_data_bs;
 			be_save <= loader_be;
 		end
@@ -701,8 +714,7 @@ wire [63:0] dram_d;
 // wire ch1_ready;
 `ifdef MISTER_DUAL_SDRAM
 wire ch1_64 = status[16];
-wire tom_pp_pixel_ce = status[84];
-wire hide_64 = 0;
+// wire hide_64 = 0;
 //`define FAST_SDRAM
 `else
 wire ch1_64 = 1;
@@ -718,10 +730,10 @@ wire [7:0] os_rom_q;
 
 wire hblank;
 wire vblank;
-wire vga_hs_n;
-wire vga_vs_n;
+wire vga_hs;
+wire vga_vs;
 wire vid_ce;
-wire ar_vsync = vga_vs_n;
+wire ar_vsync = vga_vs;
 
 wire [7:0] vga_r;
 wire [7:0] vga_g;
@@ -733,7 +745,7 @@ auto_crt_ar auto_crt_ar
 	.reset(reset),
 	.ce_pix(vid_ce),
 	.ntsc(ntsc),
-	.hsync(vga_hs_n),
+	.hsync(vga_hs),
 	.vsync(ar_vsync),
 	.hblank(hblank),
 	.vblank(vblank),
@@ -767,10 +779,10 @@ wire [15:0] m68k_bus_do;
 wire max_compat = !status[30];
 wire gamedrive_enable = max_compat;
 
-wire patch_checksums = status[2] || max_compat || status[31];
+wire patch_checksums = status[2] || max_compat;
 
 wire cd_drive_en = cd_loaded || status[52];
-wire cd_inserted = (cd_drive_en || status[53] || status[31]);
+wire cd_inserted = (cd_drive_en);
 wire cd_latency_en = !status[82];
 
 wire cd_stream_reset = cd_drive_en && cd_media_change;
@@ -779,9 +791,8 @@ reg memtrak_bios_exists = 0;
 
 //	"P1O[88:87],Fixed w/Crop,Fixed,Active,Original;",
 
-wire fixed_blank = !status[88];
-wire active_video = status[88:87] == 2'b10;
-wire crop_video = status[88:87] == 2'b00;
+wire active_video = !status[87];
+wire interlaced;
 
 jaguar jaguar_inst
 (
@@ -824,22 +835,21 @@ jaguar jaguar_inst
 	.cd_bram_q( cd_bram_q ),
 	.cd_bram_wr( cd_bram_wr ),
 
-	.vga_vs_n( vga_vs_n ) ,	// output  vga_vs_n
-	.vga_hs_n( vga_hs_n ) ,	// output  vga_hs_n
+	.vga_vs( vga_vs ) ,	// output  vga_vs
+	.vga_hs( vga_hs ) ,	// output  vga_hs
 	.vga_r( vga_r ) ,			// output [7:0] vga_r
 	.vga_g( vga_g ) ,			// output [7:0] vga_g
 	.vga_b( vga_b ) ,			// output [7:0] vga_b
 	.active_video(active_video),
-	.fixed_blank(fixed_blank),
-	.crop_video(crop_video),
 
 	.hblank( hblank ) ,		// output hblank
 	.vblank( vblank ) ,		// output vblank
+	.interlaced (interlaced ) ,	// output interlaced
 
 	.aud_16_l( aud_16_l ) ,		// output  [15:0] aud_16_l
 	.aud_16_r( aud_16_r ) ,		// output  [15:0] aud_16_r
 
-	.xwaitl( cd_en ? xwaitl : 1'b1 ) ,
+	.xwaitl( 1'b1 ) ,
 
 	.vid_ce( vid_ce ) ,
 
@@ -863,13 +873,13 @@ jaguar jaguar_inst
 	.startcas( startcas ) ,
 
 	.turbo( 0),//status[3] ) ,
-	.vintbugfix( ~status[81] | max_compat ),
+	.vintbugfix( max_compat ),
 	.cd_en( cd_drive_en ),
 	.cd_ex( cd_inserted ),
 	.cd_latency_en( cd_latency_en ),
 	.b_override(override),
 	.maxc(max_compat),
-	.auto_eeprom(status[29] | max_compat),
+	.auto_eeprom(max_compat),
 	.addr_ch3(addr_ch3[23:0]),
 	.toc_addr(cd_toc_addr),
 	.toc_data(cd_toc_data),
@@ -881,7 +891,7 @@ jaguar jaguar_inst
 	.aud_ce(aud_ce),
 	.aud_busy(audbus_busy),
 	// aud_sess: menu-driven audio-session override into Butch.
-	.aud_sess(~status[55] ^ status[31]),
+	.aud_sess(status[55]),
 	.force_music_cd(status[55]),
 	.dohacks(patch_checksums),
 	.xvclk_o(xvclk_o),
@@ -890,7 +900,6 @@ jaguar jaguar_inst
 	.errflow (errflow),
 	.unhandled (unhandled),
 	.cd_valid(cd_valid),
-	.tom_pp_pixel_ce(tom_pp_pixel_ce),
 	.ntsc( ntsc ) ,
 
 	.ps2_mouse( ps2_mouse ) ,
@@ -898,7 +907,7 @@ jaguar jaguar_inst
 	.mouse_ena_1( status[6:5]==1 ) ,
 	.mouse_ena_2( status[6:5]==2 ) ,
 
-	.ddreq(!status[54]),
+	.ddreq(1'b1 /*!status[54]*/),
 	.comlynx_tx( ser_data_out ) ,
 	.comlynx_rx( ser_data_in ) ,
 
@@ -917,7 +926,7 @@ reg p1p2pause_active;
 reg old_ps2_stb = 0;
 reg [20:0] keyboard_joystick = 0;
 wire keyboard_joystick_en = status[83];
-wire numstick_en = status[85];
+wire numstick_en = !status[85];
 wire swap_p1p2 = status[86];
 wire [31:0] joystick_p1 = swap_p1p2 ? joystick_1 : joystick_0;
 wire [31:0] joystick_p2 = swap_p1p2 ? joystick_0 : joystick_1;
@@ -925,7 +934,7 @@ wire [31:0] joystick_p1_combined = joystick_p1 | (keyboard_joystick_en ? {11'd0,
 wire [15:0] analog_p1_l = swap_p1p2 ? analog_1_l : analog_0_l;
 wire [15:0] analog_p1_r = swap_p1p2 ? analog_1_r : analog_0_r;
 wire [15:0] analog_p2_l = swap_p1p2 ? analog_0_l : analog_1_l;
-wire [15:0] analog_p2_r = swap_p1p2 ? analog_0_r : analog_1_r;
+// wire [15:0] analog_p2_r = swap_p1p2 ? analog_0_r : analog_1_r;
 wire  [8:0] spinner_p1 = swap_p1p2 ? spinner_1 : spinner_0;
 wire  [8:0] spinner_p2 = swap_p1p2 ? spinner_0 : spinner_1;
 wire [31:0] joystick_0_mux = {
@@ -1041,7 +1050,7 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.B(mix_video_b),                  // Input [DW:0] B (set by HALF_DEPTH. is [7:0] here).
 
 	// Positive pulses.
-	.HSync(vga_hs_n),           // input HSync
+	.HSync(vga_hs),           // input HSync
 	.VSync(ar_vsync),           // input VSync
 	.HBlank(hblank),            // input HBlank
 	.VBlank(vblank),            // input VBlank
@@ -1055,30 +1064,30 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.CE_PIXEL(CE_PIXEL)
 );
 
-always @(posedge clk_sys)
-if (reset) begin
-	 hcount <= 0;
-end else begin
-	hcount <= hcount + 14'd1;
-   if (hblank) begin
-		hcount <= 0;
-	end
-   if (hcount == ((status[18] ? 14'd1394 : 14'd1365)<<2)) begin // 1394 works well for NBA Jam and Flip Out; 1365 for Primal Rage
-		crop <= 1;
-	end
-   if (hcount == ((status[18] ? 14'd45 : 14'd84)<<2)) begin  // 45 works well for NBA Jam and Flip Out; 84 for Primal Rage
-		crop <= 0;
-	end
-   if (status[19:18]==2'b00) begin
-		crop <= 0;
-	end
-end
+// always @(posedge clk_sys)
+// if (reset) begin
+// 	 hcount <= 0;
+// end else begin
+// 	hcount <= hcount + 14'd1;
+//    if (hblank) begin
+// 		hcount <= 0;
+// 	end
+//    if (hcount == ((status[18] ? 14'd1394 : 14'd1365)<<2)) begin // 1394 works well for NBA Jam and Flip Out; 1365 for Primal Rage
+// 		crop <= 1;
+// 	end
+//    if (hcount == ((status[18] ? 14'd45 : 14'd84)<<2)) begin  // 45 works well for NBA Jam and Flip Out; 84 for Primal Rage
+// 		crop <= 0;
+// 	end
+//    if (status[19:18]==2'b00) begin
+// 		crop <= 0;
+// 	end
+// end
 
 // assign VGA_R = vga_r;
 // assign VGA_G = vga_g;
 // assign VGA_B = vga_b;
-// assign VGA_VS = vga_vs_n;
-// assign VGA_HS = vga_hs_n;
+// assign VGA_VS = vga_vs;
+// assign VGA_HS = vga_hs;
 // assign VGA_DE = hblank & vblank;
 // assign CE_PIXEL = vid_ce;
 
@@ -1093,7 +1102,6 @@ assign AUDIO_R = aud_16_r;
 // Legacy cart/loader DDRAM path. Streamed CD data bypasses DDRAM and drives
 // cart_q1 directly from cd_stream_q while a disc image is mounted.
 assign DDRAM_CLK = clk_sys;
-wire compare = status[63];
 wire [28:3] premixed_addr = loader_en ? boot_addr[28:3] : audbus_out[28:3];
 wire [28:3] boot_addr;
 assign boot_addr[28:20] = (os_index) ? 9'h1FF : (cdos_index) ? 9'h1FE : 9'h1FC; //nvme_index = default
@@ -1106,8 +1114,8 @@ assign boot_addr[19:3] = audbus_out[19:3];
 //
 wire [15:0] loader_data_bs = {loader_data[7:0], loader_data[15:8]};
 wire [28:0] legacy_ddram_addr = {3'h1,~premixed_addr[28:23],premixed_addr[22:3]};
-wire        legacy_ddram_rd = (loader_en) ? compare && loader_wr : (!jagcd_on_cart_bus && aud_rd_trig);
-wire        legacy_ddram_we = (loader_en) ? loader_wr && (os_index || cdos_index || nvme_index) && !compare : 1'b0;
+wire        legacy_ddram_rd = (loader_en) ? 1'b0 : (!jagcd_on_cart_bus && aud_rd_trig);
+wire        legacy_ddram_we = (loader_en) ? loader_wr && (os_index || cdos_index || nvme_index): 1'b0;
 wire [63:0] legacy_ddram_din = {loader_data_bs, loader_data_bs, loader_data_bs, loader_data_bs};
 wire  [7:0] legacy_ddram_be = (loader_en) ? loader_be : 8'b11111111;	// IIRC, the DDR controller needs the byte enables to be High during READS! ElectronAsh.
 assign DDRAM_BURSTCNT = 8'd1;
@@ -1119,7 +1127,7 @@ assign DDRAM_BE = legacy_ddram_be;
 
 //wire cart_wrack = 1'b1;	// TESTING!!
 reg [15:0] loader_save;
-reg mismatch;
+// reg mismatch;
 reg [7:0] be_save;
 reg [23:0] old_abus_out;
 wire overflow;
@@ -1376,7 +1384,7 @@ wire [63:32] fastram0;
 wire [63:32] fastram1;
 wire [63:32] fastram2;
 wire cache0 = sdram_addr[17:15] == status[36:34];
-wire cache1 = sdram_addr[17:15] == (status[39:37] ^ 3'b111);
+wire cache1 = !memtrack && (sdram_addr[17:15] == (status[39:37] ^ 3'b111));
 wire cache2 = sdram_addr[17:15] == (status[36:34] ^ 3'b001);
 wire [3:0] wr0 = {4{fastram_w & cache0}} & ch1_be[7:4];
 wire [3:0] wr1 = {4{fastram_w & cache1}} & ch1_be[7:4];
@@ -1422,7 +1430,7 @@ spram_byte_32x15 fastcache1_sdram
 	.addr_16    ( memtrack_fastcache_addr ),
 	.dout_16    ( memtrack_fastcache_q16 ),
 	.din_16     ( dram_d[15:0] ),
-	.wr_16      ( cart_wr_trig ? memtrack_wr_be : 2'b00 ),
+	.wr_16      ( memtrack_wr_valid ? memtrack_wr_be : 2'b00 ),
 	.addr_b_16  ( memtrack_hps_addr ),
 	.dout_b_16  ( memtrack_hps_q16 ),
 	.din_b_16   ( sd_buff_dout ),
@@ -1514,8 +1522,9 @@ end
 // The local 0x9xxxxx Memory Track window is fed by the same cart-side 16-bit
 // byte-enable mapping used for channel 2. A1 still selects the halfword via
 // addr_16[0]; wr_16 should only carry the two byte strobes for that halfword.
+wire memtrack_wr_valid = cart_wr_trig && cd_drive_en && memtrack;
 assign memtrack_wr_be = abus_out[1] ? ch1_be[1:0] : ch1_be[3:2];
-assign memtrack_dirty = cart_wr_trig && |memtrack_wr_be;
+assign memtrack_dirty = memtrack_wr_valid && |memtrack_wr_be;
 assign memtrack_fastcache_hps_wr = sd_buff_wr & memtrak_slot_ack;
 assign memtrack_fastcache_addr = abus_out[16:1];
 wire [15:0] memtrack_wr_data = dram_d[15:0];
@@ -1539,14 +1548,14 @@ spram_byte_32x15 fastcache1
 	.addr_16    ( memtrack_fastcache_addr ),
 	.dout_16    ( memtrack_fastcache_q16 ),
 	.din_16     ( memtrack_wr_data ),
-	.wr_16      ( cart_wr_trig ? memtrack_wr_be : 2'b00 ),
+	.wr_16      ( memtrack_wr_valid ? memtrack_wr_be : 2'b00 ),
 	.addr_b_16  ( memtrack_hps_addr ),
 	.dout_b_16  ( memtrack_hps_q16 ),
 	.din_b_16   ( sd_buff_dout ),
 	.wr_b_16    ( memtrack_fastcache_hps_wr ? 2'b11 : 2'b00 )
 );
 `endif
-wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : debug_trig ? {16'h0000, debug_q} : memtrack_ram ? memtrack_fastcache_q : (!os_rd_trig && !override && memtrack && !memtrack_ram) ? {cart_qsc[31:24],cart_qsc[23:16],cart_qsc[15:8],cart_qsc[7:0]} : cart_qsc;
+wire [31:0] cart_qs = memtrack_rdo1 ? 32'h00550055 : memtrack_ram ? memtrack_fastcache_q : (!os_rd_trig && !override && memtrack && !memtrack_ram) ? {cart_qsc[31:24],cart_qsc[23:16],cart_qsc[15:8],cart_qsc[7:0]} : cart_qsc;
 wire [31:0] cart_qsc;
 wire [23:1] cart_ch2_addr = (loader_en) ? loader_addr[23:1] | (os_index ? 23'h7F0000 : cdos_index ? 23'h7C0000 : nvme_index ? 23'h7E0000 : 23'h000000) : {1'b0,abus_out[22:20] & cart_mask[22:20],abus_out[19:2],memtrack_wr ? abus_out[1] : 1'b0} | (os_rd_trig ? 23'h7F0000 : override ? 23'h7C0000 : memtrack ? 23'h7E0000 : 23'h000000);
 wire        cart_ch2_addr_ext = (loader_en) ? (os_index | cdos_index | nvme_index) : (os_rd_trig | override | memtrack);
@@ -1695,7 +1704,7 @@ wire        save_backram_wren_a = cart_bram_wr;
 wire [12:0] save_backram_addr_b = {3'b000, sd_lba[1:0], sd_buff_addr};
 wire        save_backram_wren_b = sd_buff_wr & sd_ack;
 
-assign cart_save_sd_buff_din = status[62] ? db_int_douts : cart_save_int_dout;
+assign cart_save_sd_buff_din = /*status[62] ? db_int_douts : */ cart_save_int_dout;
 assign memtrak_save_sd_buff_din = memtrack_hps_q16;
 assign eeprom_save_sd_buff_din = cd_eeprom_int_dout;
 assign cart_bram_q = save_backram_q_a;
@@ -1897,7 +1906,7 @@ jaguar_save_slot #(
 	.save_req(status[11]),
 	.autosave_disable(status[13]),
 	.osd_status(OSD_STATUS),
-	.dirty_pulse(cart_bram_wr || (dbgram_w && status[62])),
+	.dirty_pulse(~memtrack && ~cd_drive_en && (cart_bram_wr /*|| (dbgram_w && status[62])*/)),
 	.mounted_writable(cart_save_enabled),
 	.pending(cart_save_pending),
 	.busy(cart_save_busy),
@@ -1941,7 +1950,7 @@ jaguar_save_slot #(
 	.save_req(status[11]),
 	.autosave_disable(1'b0),
 	.osd_status(OSD_STATUS),
-	.dirty_pulse(cd_bram_wr),
+	.dirty_pulse(cd_bram_wr && cd_drive_en),
 	.mounted_writable(eeprom_save_enabled),
 	.pending(eeprom_save_pending),
 	.busy(eeprom_save_busy),
