@@ -213,7 +213,7 @@ wire lcnt = max_load_cnt == load_cnt;
 reg [31:0] cload_cnt;
 reg [31:0] max_cload_cnt;
 wire clcnt = max_cload_cnt == cload_cnt;
-localparam [5:0] CD_STARTUP_PREFETCH_DEPTH = 6'd4;
+localparam [5:0] CD_STARTUP_PREFETCH_DEPTH = 6'd10;
 wire [5:0] cd_ring_target_depth = stream_idle ? CD_RING_DEPTH : 6'd1;
 reg [4:0] cd_state;
 reg [29:0] cd_size;

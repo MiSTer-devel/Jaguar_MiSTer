@@ -271,9 +271,58 @@ wire cdkartpullreset = butch_reg[0][20];
 // F0h Servo Version Number - servo - Servo version number
 
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
+//setup:
+//	move.l	#0,BUTCH	; enable BUTCH
+//	move.l	#$10000,DSCNTRL	; enable DSA
+//	move.l	#7,I2CNTRL	; Enable I2S
+//	move.l	#1,I2CNTRL	; Enable I2S
+//	move.w	#$7001,DS_DATA	; Set non oversampled audio
+//	rts
+
+//;	movei	#BUTCH,r20		; moved for pipeline
+//	load	(r20),r27		;check for DSARX int pending
+//	btst	#13,r27
+//	jr	z,fifo_read	; This should ALWAYS fall thru the first time
+//; Set the match bit, to allow data
+//	moveq	#3,r26		; enable FIFO only
+//	store	r26,(r20)
+//	addq	#$10,r20
+//	load	(r20),r27
+//	bset	#2,r27
+//	store	r27,(r20)		; Disable SUBCODE match
+
+//jeri:
+//	move.l	I2CNTRL,d1
+//	tst.w	d0
+//	bne.b	.send
+//	bclr	#1,d1
+//	bra.b	.save
+//.send:
+//	bset	#1,d1
+//.save:
+//	bset	#2,d1
+//	move.l	d1,I2CNTRL
+//	rts
+
+//read:
+//	btst.l	#31,d0
+//	bne.b	.play
+//	subq.l	#4,a0		; Make up for ISR pre-increment
+//	move.l	#%0,BUTCH	; NO INTERRUPTS!!!!!!!!!!!
+//	move.w	#$101,J_INT
+//	move.l	I2CNTRL,d1	;Read I2S Control Register
+//	bclr	#2,d1		; Stop data
+//	move.l	d1,I2CNTRL
+
+//uread:
+//	move.l	I2CNTRL,d0	;Read I2S Control Register
+//	bclr	#2,d0		; Stop data
+//	move.l	d0,I2CNTRL
+//	rts
+
 wire i2s_drive = butch_reg[4][0];
 wire i2s_jerry = butch_reg[4][1];
-wire i2s_fifo_enabled = butch_reg[4][2]; // guess. turned on in read handler (gas/das)
+wire i2s_fifo_enabled = butch_reg[4][2]; // guess. turned on in read handler (gas/das) where labeled as Disable SUBCODE Match // pulsed to low in CD_setup
 wire i2s_16bit = butch_reg[4][3]; // ? only affects i2s format?
 wire i2s_fifonempty = i2s_rfifopos != i2s_wfifopos;//butch_reg[4][4];
 reg [31:0] ds_resp [0:5];
@@ -313,8 +362,10 @@ reg [6:0] aminutes; // 0-99 // (msf / 75) / 60
 reg [6:0] atrack;   // 1-99
 wire [7:0] subcodeq [0:11];
 wire [6:0] atrack_safe = (atrack > 7'd99) ? 7'd99 : atrack;
-wire [7:0] subq_tno;
-wire [7:0] subq_index;
+reg [7:0] subq_tno;
+reg [7:0] subq_index;
+wire [7:0] cur_subq_tno;
+wire [7:0] cur_subq_index;
 assign subcodeq[0] = 8'h1; // 2 channel audio no preemphasis, address 1
 assign subcodeq[1] = subq_tno; // track number bcd, or AA in leadout
 assign subcodeq[2] = subq_index; // index: 00 pregap, 01 program
@@ -335,16 +386,16 @@ reg [3:0] subidx;
 reg [7:0] sub_chunk_count;
 reg subcode_irq_pending;
 reg frame_irq_pending;
-wire [7:0] sub_chunk_tag = ((sub_chunk_count < 8'h10) || (sub_chunk_count > 8'h1B)) ? 8'h10 : sub_chunk_count;
+wire sub_invalid = (sub_chunk_count < 8'h10) || (sub_chunk_count > 8'h1B);
+wire cdg_invalid = (sub_invalid) || (gsubidx != 6'h30) || (!cd_sector2448);
 reg [5:0] gsubidx;
-reg csubg;
 wire [5:0] cdg [0:95];
-reg [7:0] subcoder [0:31];// = cdg[subidx][5];
-reg [7:0] subcodes [0:31];// = cdg[subidx][4];
-reg [7:0] subcodet [0:31];// = cdg[subidx][3];
-reg [7:0] subcodeu [0:31];// = cdg[subidx][2];
-reg [7:0] subcodev [0:31];// = cdg[subidx][1];
-reg [7:0] subcodew [0:31];// = cdg[subidx][0];
+reg [7:0] subcoder [0:11];// = cdg[subidx][5];
+reg [7:0] subcodes [0:11];// = cdg[subidx][4];
+reg [7:0] subcodet [0:11];// = cdg[subidx][3];
+reg [7:0] subcodeu [0:11];// = cdg[subidx][2];
+reg [7:0] subcodev [0:11];// = cdg[subidx][1];
+reg [7:0] subcodew [0:11];// = cdg[subidx][0];
 /*integer kk;
 initial begin
  for (kk = 0; kk < 12; kk = kk + 1)
@@ -392,8 +443,10 @@ wire [7:0] subcodev0 = {cdg_in[25],cdg_in[17],cdg_in[9], cdg_in[1],cdg_in[57],cd
 wire [7:0] subcodew0 = {cdg_in[24],cdg_in[16],cdg_in[8], cdg_in[0],cdg_in[56],cdg_in[48],cdg_in[40],cdg_in[32]};
 //wire [31:0] subrespa = {subcodes0,subcoder0,subcodeq[subidx],sub_chunk_tag}; //,subcodeq0,};
 //wire [31:0] subrespb = {subcodew0,subcodev0,subcodeu0,subcodet0};
-wire [31:0] subrespa = {subcodes[{csubg,subidx}],subcoder[{csubg,subidx}],subcodeq[subidx],sub_chunk_tag};
-wire [31:0] subrespb = {subcodew[{csubg,subidx}],subcodev[{csubg,subidx}],subcodeu[{csubg,subidx}],subcodet[{csubg,subidx}]};
+wire [31:0] subrespa;
+assign subrespa[15:0] = sub_invalid ? 16'h0000 : {subcodeq[subidx],sub_chunk_count};
+assign subrespa[31:16] = cdg_invalid ? 16'h0000 : {subcodes[subidx],subcoder[subidx]};
+wire [31:0] subrespb = cdg_invalid ? 32'h00000000 : {subcodew[subidx],subcodev[subidx],subcodeu[subidx],subcodet[subidx]};
 wire subbit = subcodeq[crcidx[6:3]][~crcidx[2:0]];
 wire [15:0] crcs = nextcrcb ? crc ^ {subcodeq[crcidx[6:3]],8'h00} : crc;
 wire [15:0] nextcrc = {crcs[14:0],1'b0};
@@ -881,9 +934,9 @@ begin
 end
 endfunction
 
-assign subq_tno = subq_leadout ? 8'hAA : ((subq_program || subq_pregap) ? bcd[atrack_safe] : 8'h00);
-assign subq_index = subq_program ? 8'h01 : 8'h00;
-wire [7:0] atti_cur_index = subq_index;
+assign cur_subq_tno = subq_leadout ? 8'hAA : ((subq_program || subq_pregap) ? bcd[atrack_safe] : 8'h00);
+assign cur_subq_index = subq_program ? 8'h01 : 8'h00;
+wire [7:0] atti_cur_index = cur_subq_index;
 wire [7:0] atti_cur_title = subq_leadout ? 8'hAA : {1'b0,track_idx};
 wire atti_runtime_active = play && !stop && !spinpause && !pause && (seek == 8'h0) && (splay == 5'h0);
 wire atti_evt_drain_active = atti_runtime_active || atti_force_full_update;
@@ -1013,6 +1066,8 @@ begin
 		crcidx <= 7'h00;
 		crc1  <= 8'h0;
 		crc0  <= 8'h0;
+		subq_tno <= cur_subq_tno;
+		subq_index <= cur_subq_index;
 		rframes <= cur_rframes;
 		rseconds <= cur_rseconds;
 		rminutes <= cur_rminutes;
@@ -1037,6 +1092,8 @@ reg [23:0] cueptemp;
 reg [23:16] cuestoptemp;
 reg tocsess1;
 reg pastcdbios;
+reg found_wait;
+reg found_wait2;
 
 always @(posedge sys_clk)
 begin
@@ -1334,7 +1391,7 @@ begin
 		cur_aseconds <= cues_dout[13:8];
 		cur_aminutes <= cues_dout[22:16];
 	end
-	if (play_title_pending_rsp && !updabs_req && !updabs && (ds_resp_size == 3'h0) && !ds_a) begin
+	if (play_title_pending_rsp && !updabs_req && !updabs && (ds_resp_size == 3'h0) && !ds_a && !found_wait && !found_wait2 && (sub_chunk_count != 8'h0F)) begin
 		butch_reg[0][12] <= 1'b1;
 		butch_reg[0][13] <= 1'b1;
 		if (attiabs || attirel) begin
@@ -1509,21 +1566,22 @@ begin
 		ds_resp_loop <= 7'h0;
 		goto_found_pending_rsp <= 1'b0;
 	end
-	if (gsubidx != 6'h30) begin
+	if (gsubidx < 6'h30) begin
 		gsubidx <= gsubidx + 6'd1;
 		if (gsubidx[1:0]==2'b10) begin
-			subcoder[{!csubg,gsubidx[5:2]}] <= subcoder0;
-			subcodes[{!csubg,gsubidx[5:2]}] <= subcodes0;
-			subcodet[{!csubg,gsubidx[5:2]}] <= subcodet0;
-			subcodeu[{!csubg,gsubidx[5:2]}] <= subcodeu0;
-			subcodev[{!csubg,gsubidx[5:2]}] <= subcodev0;
-			subcodew[{!csubg,gsubidx[5:2]}] <= subcodew0;
+			subcoder[gsubidx[5:2]] <= subcoder0;
+			subcodes[gsubidx[5:2]] <= subcodes0;
+			subcodet[gsubidx[5:2]] <= subcodet0;
+			subcodeu[gsubidx[5:2]] <= subcodeu0;
+			subcodev[gsubidx[5:2]] <= subcodev0;
+			subcodew[gsubidx[5:2]] <= subcodew0;
 		end else if (gsubidx[1:0]==2'b11) begin
 			aud_add <= aud_add + 4'h8;
 			aud_rd <= 1'b1;
 		end
 	end
 	if (seek != 8'h0) begin
+		gsubidx <= 6'h31;
 		if (seek[7]) begin       // Loop looking for cues_addr starting at last one
 			seek[0] <= !seek[0];  // These two settings do alternate between updating cues_addr and using it
 			seek[1] <= seek[0];
@@ -1851,7 +1909,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 							end else begin
 								aud_add <= aud_add + 4'h8;
 								if (cd_sector2448 && ({cur_samples[9:1],1'b0} == 10'd586)) begin
-									gsubidx <= 6'd0;
+									gsubidx <= 6'h0;
 								end
 //						if (aud_in != aud_cmp) begin
 						if (!cd_valid) begin
@@ -1866,11 +1924,13 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 						if (wsout) begin
 						cur_samples <= cur_samples + 10'h1;
 						if ((sub_chunk_count == 8'h1B) || (sub_chunk_count == 8'h0F)) begin
-							if ((cur_samples == 10'd587)) begin
+							if ((cur_samples == 10'd587) || (cur_samples <= 10'd1)) begin
 								subcode_irq_pending <= 1'b1;
 								sub_chunk_count <= 8'h10;
 								subidx <= 4'h0;
-								csubg <= !csubg;
+								upd_frames <= 1'b1;
+								found_wait <= (sub_chunk_count == 8'h0F);
+								found_wait2 <= found_wait;
 							end
 						end else
 						if ((cur_samples == 10'd48) || (cur_samples == 10'd97) ||
