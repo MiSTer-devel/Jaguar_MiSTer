@@ -42,6 +42,10 @@ module _vid
 	input vey,
 	input vly,
 	input lock,
+	input ntsc, // Not in netlist
+	input fixed_blank, // Not part of netlist
+	input active_video, // Not part of netlist
+	input crop_video, // Not part of netlist
 	output start,
 	output dd,
 	output lbufa,
@@ -54,6 +58,7 @@ module _vid
 	output blank,
 	output vblank_out,
 	output hblank_out,
+	output [2:0] pix_ce_div,// Not part of netlist
 	output hsync_out,
 	output vsync_out,
 	output vvs_o,
@@ -504,8 +509,10 @@ begin
 		heq_[9:0] <= din[9:0];
 	end
 end
-assign hbbeq = hbb_[10:0] == hc[10:0];
-assign hbeeq = hbe_[10:0] == hc[10:0];
+assign hbbeq = hbb_fixed == hc[10:0]; // Modified to use fixed
+assign hbeeq = hbe_fixed == hc[10:0]; // Modified to use fixed original below
+//assign hbeeq = hbb_ == hc[10:0];
+//assign hbeeq = hbe_ == hc[10:0];
 assign hdb1eq = hdb1_[10:0] == hc[10:0];
 assign hdb2eq = hdb2_[10:0] == hc[10:0];
 assign hdeeq = hde_[10:0] == hc[10:0];
@@ -626,8 +633,67 @@ begin
 		vi[10:0] <= din[10:0];
 	end
 end
-assign vbbeq = vbb[10:0] == vc[10:0];
-assign vbeeq = vbe[10:0] == vc[10:0];
+
+
+// Blanks are important to alter here, because they eventually feed into the BLANK signal which is
+// used in pix.v to determine what pixels are drawn, so merely changing the blanks given to the
+// framework isn't enough, the pixel output will still be cropped without changing the system's
+// internal behavior.
+// In NTSC, 1588 x 476 seems to be the canonical drawn screen size, PAL is 1588 x 568.
+// What we want is about a 640x224 output which is 1280x448 output in atari terms.
+// 704x238
+// 5, 10, -1, 7
+
+// It seems the active display drawing makes the vblank shifted up by 2 jaguar lines and the hblank shifted right by 4 jaguar clocks
+
+
+wire [10:0] hdb_real = (hdb1_ < hdb2_) ? hdb1_ : hdb2_;
+
+wire [10:0] hb_real = (hdb_real > hbe_) ? hdb_real : hbe_;
+wire [10:0] he_real = (hde_ < hbb_) ? hde_ : hbb_;
+wire [10:0] vb_real = (vdb > vbe) ? vdb : vbe;
+wire [10:0] ve_real = (vde < vbb) ? vde : vbb;
+
+wire [10:0] cropped_hlen = (ntsc ? 11'd1280 : 11'd1398) + 11'd192; // I don't know why it needs the 180. I really don't.
+wire [10:0] cropped_vlen = ntsc ? 11'd448 : 11'd574;
+wire [10:0] full_hlen = ntsc ? 11'd1588 : 11'd1553;
+wire [10:0] full_vlen = ntsc ? 11'd482 : 11'd576;
+
+// The active drawn area between the blanks.
+wire [10:0] hblank_len = hbb_[10:0] - hbe_[10:0];
+wire [10:0] vblank_len = vbb[10:0] - vbe[10:0];
+
+wire [10:0] hactive_len = he_real - hb_real;
+wire [10:0] vactive_len = ve_real - vb_real;
+
+wire [10:0] hgap_lead = hb_real - hbe_;
+wire [10:0] hgap_tail = hbb_ - he_real;
+wire [10:0] vgap_lead = vb_real - vbe;
+wire [10:0] vgap_tail = vbb - ve_real;
+
+// Only crop if we need to crop.
+wire [10:0] ha_diff = (hactive_len > cropped_hlen) ? (hactive_len - cropped_hlen) : 11'd0;
+wire [10:0] va_diff = (vactive_len > cropped_vlen) ? (vactive_len - cropped_vlen) : 11'd0;
+
+// The space between hblank end and drawing begin, plus whatever crop we need to do to the drawing area.
+wire [10:0] h_offset = 11'd4;
+wire [10:0] v_offset = 11'd0; // Maybe 4 for some things?
+wire [10:0] h_mask_offset = 11'd28; // I have no earthly idea why this number is needed.
+
+wire [10:0] h_lead_diff = (hgap_lead + ha_diff[10:1]);
+wire [10:0] h_tail_diff = (hgap_tail + ha_diff[10:1]);
+wire [10:0] v_lead_diff = (vgap_lead + va_diff[10:1]);
+wire [10:0] v_tail_diff = (vgap_tail + va_diff[10:1]);
+
+wire crop_h = ((hbe_ + h_lead_diff + h_mask_offset) >= hc[10:0]) || (((hbb_ + h_mask_offset) - h_tail_diff) <= hc[10:0]);
+
+wire [10:0] vbb_fixed = active_video ? (ve_real + v_offset) : (fixed_blank ? (crop_video ? ((vbb[10:0] - v_tail_diff) + v_offset)          : (vbe_fixed + full_vlen))    : vbb[10:0]);
+wire [10:0] vbe_fixed = active_video ? (vb_real + v_offset) : (fixed_blank ? (crop_video ? ((vbe[10:0] + v_lead_diff) + v_offset)          : (vbe[10:0]))                : vbe[10:0]);
+wire [10:0] hbb_fixed = active_video ? (he_real + h_offset) : (fixed_blank ? (crop_video ? (hbb_ + h_offset)                             : (hbe_fixed + full_hlen))    : hbb_[10:0]);
+wire [10:0] hbe_fixed = active_video ? (hb_real + h_offset) : (fixed_blank ? (crop_video ? (hbe_ + h_offset)                             : (hbe_[10:0]))               : hbe_[10:0]);
+
+assign vbbeq = vbb_fixed == vc[10:0];
+assign vbeeq = vbe_fixed == vc[10:0];
 assign vdbeq = vdb[10:0] == vc[10:0];
 assign vdeeq = vde[10:0] == vc[10:0];
 assign vebeq = veb[10:0] == vc[10:0];
@@ -676,7 +742,7 @@ always @(posedge sys_clk)
 begin
 	if (~old_clk && clk) begin
 		if (vclb) begin
-			vcl_obuf[10:0] <= vc[10:0]; 
+			vcl_obuf[10:0] <= vc[10:0];
 		end
 	end
 end
@@ -692,9 +758,9 @@ always @(posedge sys_clk)
 begin
 	if (~old_clk && clk) begin
 		if (~vresl) begin
-			vdactive <= 1'b0; 
+			vdactive <= 1'b0;
 		end else if (hdb) begin
-			vdactive <= vvactive; 
+			vdactive <= vvactive;
 		end
 	end
 end
@@ -741,10 +807,6 @@ assign lbaactive = ~lbaai;
 // VID.NET (286) - lbbactive : ivu
 assign lbbactive = ~lbbai;
 
-// Kitrinx - add some signals
-assign vblank_out = vblank;
-assign hblank_out = hblank;
-
 // VID.NET (288) - vblank : fjkr
 // VID.NET (289) - hblank : fjkr
 // VID.NET (295) - hs : fjkr
@@ -752,6 +814,10 @@ assign hblank_out = hblank;
 // VID.NET (306) - hvsync : fjkr
 // VID.NET (307) - vesync : fjkr
 // VID.NET (310) - hesync : fjkr
+
+// These registers are not part of netlist
+reg hblank_obuf, vblank_obuf, vblank_obuf1, vblank_obuf2, hsync_obuf, vsync_obuf;
+
 always @(posedge sys_clk)
 begin
 	if (~old_clk && clk) begin
@@ -762,8 +828,35 @@ begin
 		hvs <= ((hvstart & ~hvs) | (~hvse & hvs)) & vresl;
 		ves <= ((vebeq & ~ves) | (~veeeq & ves)) & vresl;
 		hes <= ((hestart & ~hes) | (~heqe & hes)) & vresl;
+
+		// Align everything. Not in netlist.
+		if (~vresl) begin
+			hblank_obuf <= 1'b0;
+			vblank_obuf <= 1'b0;
+			hsync_obuf <= 1'b0;
+			vsync_obuf <= 1'b0;
+		end else begin
+			hblank_obuf <= hblank;
+			hsync_obuf <= hs;
+			if (hs)
+				vsync_obuf <= vvs;
+			if (hblank) begin
+				vblank_obuf1 <= vblank;
+				vblank_obuf2 <= vblank_obuf1;
+				vblank_obuf <= vblank_obuf2;
+			end
+		end
 	end
 end
+
+/* not part of netlist */
+assign vblank_out = vblank_obuf;
+assign hblank_out = hblank_obuf;
+assign vsync_out = vsync_obuf;
+assign hsync_out = hsync_obuf;
+assign pix_ce_div = ppn;
+/* end not part of netlist */
+
 assign notvblank = ~vblank;
 assign nothblank = ~hblank;
 assign noths_obuf = ~hs;
@@ -773,14 +866,10 @@ assign notves = ~ves;
 assign nothes = ~hes;
 
 // VID.NET (290) - blank : nd2
-assign blank = ~(notvblank & nothblank);
+assign blank = ~(notvblank & nothblank) || (crop_video && crop_h); // The latter half of this is not in netlist.
 
 // VID.NET (305) - hvstart : an2
 assign hvstart = hvsb & vvs;
-
-assign vsync_out = hvs;
-assign vvs_o = vvs;
-assign hsync_out = hes;
 
 // VID.NET (309) - hestart : an2
 assign hestart = hvsb & ves;
@@ -863,8 +952,8 @@ always @(posedge sys_clk)
 begin
 	if (~old_clk && clk) begin
 		if (lpld) begin
-			lph[10:0] <= hc[10:0]; 
-			lpv[11:0] <= vc[11:0]; 
+			lph[10:0] <= hc[10:0];
+			lpv[11:0] <= vc[11:0];
 		end
 	end
 end
@@ -974,4 +1063,3 @@ assign dr_out[11] = (dr_vc_oe & dr_vc_out[11]) | (dr_lph_oe & dr_lph_out[11]) | 
 assign dr_11_0_oe = dr_15_12_oe | dr_test3r_oe;
 
 endmodule
-

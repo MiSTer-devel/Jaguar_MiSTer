@@ -6,6 +6,7 @@
 //  128        127:96          95:64         63:32         31:0
 // Integer values are in BIG endian byte order, so it up to the loader
 // or generator of the code to re-arrange them correctly.
+`include "defines.vh"
 
 module CODES(
 	input  clk,        // Best to not make it too high speed for timing reasons
@@ -18,89 +19,141 @@ module CODES(
 	output [DATA_WIDTH - 1:0] data_out
 );
 
+
 parameter ADDR_WIDTH   = 16; // Not more than 32
 parameter DATA_WIDTH   = 8;  // Not more than 32
 parameter MAX_CODES    = 32;
 parameter BIG_ENDIAN   = 0;
 
-localparam INDEX_SIZE  = $clog2(MAX_CODES-1); // Number of bits for index, must accomodate MAX_CODES
-
-localparam DATA_S      = DATA_WIDTH - 1;
-localparam COMP_S      = DATA_S + DATA_WIDTH;
-localparam ADDR_S      = COMP_S + ADDR_WIDTH;
-localparam COMP_F_S    = ADDR_S + 1;
-localparam CODE_WIDTH  = COMP_F_S + 1;
-localparam ENA_F_S     = CODE_WIDTH + 1;
-
 localparam NO_ADDR_LSB = (DATA_WIDTH == 16) ? 1 : 0;
+localparam INDEX_SIZE  = (MAX_CODES > 1) ? $clog2(MAX_CODES) : 1;
 
-reg [ENA_F_S:0] codes[MAX_CODES];
+`ifdef FAST_COMPILE
+	assign data_out = data_in;
+	assign available = 1'b0;
+`else
 
-wire [ADDR_WIDTH-1: 0] code_addr    = code[64+:ADDR_WIDTH] ^ BIG_ENDIAN[0];
-wire [DATA_WIDTH-1: 0] code_compare = code[32+:DATA_WIDTH];
-wire [DATA_WIDTH-1: 0] code_data    = code[0+:DATA_WIDTH];
-wire code_comp_f = code[96];
-wire code_width  = code[97] && (DATA_WIDTH == 16);
+logic [ADDR_WIDTH - 1:0] codes_addr        [MAX_CODES];
+logic [DATA_WIDTH - 1:0] codes_compare_mask[MAX_CODES];
+logic [DATA_WIDTH - 1:0] codes_compare_val [MAX_CODES];
+logic [DATA_WIDTH - 1:0] codes_replace_mask[MAX_CODES];
+logic [DATA_WIDTH - 1:0] codes_replace_val [MAX_CODES];
+logic                    codes_enable      [MAX_CODES];
 
-// If MAX_INDEX is changes, these need to be made larger
-wire [INDEX_SIZE-1:0] index, dup_index;
-reg [INDEX_SIZE:0] next_index;
-wire found_dup;
+logic [INDEX_SIZE:0]     next_index;
+logic                    code_change;
 
-assign index = found_dup ? dup_index : next_index[INDEX_SIZE-1:0];
+logic [ADDR_WIDTH - 1:0] load_addr;
+logic [DATA_WIDTH - 1:0] load_compare_raw;
+logic [DATA_WIDTH - 1:0] load_replace_raw;
+logic                    load_compare_en;
+logic                    load_byte_code;
+logic [DATA_WIDTH - 1:0] load_compare_mask;
+logic [DATA_WIDTH - 1:0] load_compare_val;
+logic [DATA_WIDTH - 1:0] load_replace_mask;
+logic [DATA_WIDTH - 1:0] load_replace_val;
+logic                    found_dup;
+logic [INDEX_SIZE-1:0]   dup_index;
+logic [INDEX_SIZE-1:0]   load_index;
+logic [DATA_WIDTH - 1:0] data_out_next;
 
-// See if the code exists already, so it can be disabled if loaded again
+assign load_addr        = code[64 +: ADDR_WIDTH] ^ BIG_ENDIAN[0];
+assign load_compare_raw = code[32 +: DATA_WIDTH];
+assign load_replace_raw = code[0  +: DATA_WIDTH];
+assign load_compare_en  = code[96];
+assign load_byte_code   = code[97] && (DATA_WIDTH == 16);
+assign load_index       = found_dup ? dup_index : next_index[INDEX_SIZE-1:0];
+
+assign available = (next_index != '0);
+assign data_out  = enable ? data_out_next : data_in;
+
+always_comb begin
+	load_compare_mask = '0;
+	load_compare_val  = '0;
+	load_replace_mask = '0;
+	load_replace_val  = '0;
+
+	if (DATA_WIDTH == 8 || !load_byte_code) begin
+		load_replace_mask = {DATA_WIDTH{1'b1}};
+		load_replace_val  = load_replace_raw;
+		if (load_compare_en) begin
+			load_compare_mask = {DATA_WIDTH{1'b1}};
+			load_compare_val  = load_compare_raw;
+		end
+	end else if (load_addr[0]) begin
+		load_replace_mask = DATA_WIDTH'(16'hFF00);
+		load_replace_val  = DATA_WIDTH'({load_replace_raw[7:0], 8'h00});
+		if (load_compare_en) begin
+			load_compare_mask = DATA_WIDTH'(16'hFF00);
+			load_compare_val  = DATA_WIDTH'({load_compare_raw[7:0], 8'h00});
+		end
+	end else begin
+		load_replace_mask = DATA_WIDTH'(16'h00FF);
+		load_replace_val  = DATA_WIDTH'({8'h00, load_replace_raw[7:0]});
+		if (load_compare_en) begin
+			load_compare_mask = DATA_WIDTH'(16'h00FF);
+			load_compare_val  = DATA_WIDTH'({8'h00, load_compare_raw[7:0]});
+		end
+	end
+end
+
 always_comb begin
 	int x;
-	dup_index = 0;
-	found_dup = 0;
+
+	found_dup = 1'b0;
+	dup_index = '0;
 
 	for (x = 0; x < MAX_CODES; x = x + 1) begin
-		if (codes[x][ADDR_S-:ADDR_WIDTH] == code_addr) begin
+		if (codes_enable[x] && (codes_addr[x] == load_addr)) begin
+			found_dup = 1'b1;
 			dup_index = x[INDEX_SIZE-1:0];
-			found_dup = 1;
 		end
 	end
 end
 
-assign available = |next_index;
-
-reg code_change;
 always_ff @(posedge clk) begin
 	int x;
+
 	if (reset) begin
-		next_index <= 0;
-		code_change <= 0;
-		for (x = 0; x < MAX_CODES; x = x + 1) codes[x] <= '0;
+		next_index  <= '0;
+		code_change <= 1'b0;
+		for (x = 0; x < MAX_CODES; x = x + 1) begin
+			codes_addr[x]         <= '0;
+			codes_compare_mask[x] <= '0;
+			codes_compare_val[x]  <= '0;
+			codes_replace_mask[x] <= '0;
+			codes_replace_val[x]  <= '0;
+			codes_enable[x]       <= 1'b0;
+		end
 	end else begin
 		code_change <= code[128];
-		if (code[128] && ~code_change && (found_dup || next_index < MAX_CODES)) begin // detect posedge
-			// replace it if the same address, otherwise, add a new code
-			codes[index] <= {1'b1, code_width, code_comp_f, code_addr, code_compare, code_data};
-			if (~found_dup) next_index <= next_index + 1'b1;
+		if (code[128] && !code_change && (found_dup || (next_index < MAX_CODES))) begin
+			codes_addr[load_index]         <= load_addr;
+			codes_compare_mask[load_index] <= load_compare_mask;
+			codes_compare_val[load_index]  <= load_compare_val;
+			codes_replace_mask[load_index] <= load_replace_mask;
+			codes_replace_val[load_index]  <= load_replace_val;
+			codes_enable[load_index]       <= 1'b1;
+			if (!found_dup) next_index <= next_index + 1'b1;
 		end
 	end
 end
 
 always_comb begin
 	int x;
-	data_out = data_in;
+
+	data_out_next = data_in;
 
 	if (enable) begin
 		for (x = 0; x < MAX_CODES; x = x + 1) begin
-			if (codes[x][ENA_F_S] && codes[x][ADDR_S-:(ADDR_WIDTH-NO_ADDR_LSB)] == addr_in[ADDR_WIDTH-1:NO_ADDR_LSB]) begin
-				if (!codes[x][COMP_F_S] || (
-					(DATA_WIDTH == 8 || !codes[x][CODE_WIDTH]) ? (data_in       == codes[x][COMP_S-:DATA_WIDTH]) : 
-					(codes[x][ADDR_S-ADDR_WIDTH+1])            ? (data_in[15:8] == codes[x][(COMP_S-DATA_WIDTH+1) +:8]) : 
-					                                             (data_in[7:0]  == codes[x][(COMP_S-DATA_WIDTH+1) +:8]) ))
-				begin
-					if(DATA_WIDTH == 8 || !codes[x][CODE_WIDTH])  data_out       = codes[x][DATA_S-:DATA_WIDTH];
-					else if (codes[x][ADDR_S-ADDR_WIDTH+1])       data_out[15:8] = codes[x][(DATA_S-DATA_WIDTH+1) +:8];
-					else                                          data_out[7:0]  = codes[x][(DATA_S-DATA_WIDTH+1) +:8];
+			if (codes_enable[x] && (codes_addr[x][ADDR_WIDTH-1:NO_ADDR_LSB] == addr_in[ADDR_WIDTH-1:NO_ADDR_LSB])) begin
+				if (((data_in & codes_compare_mask[x]) == codes_compare_val[x])) begin
+					data_out_next = (data_out_next & ~codes_replace_mask[x]) | codes_replace_val[x];
 				end
 			end
 		end
 	end
 end
+`endif
 
 endmodule

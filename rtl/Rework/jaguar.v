@@ -32,12 +32,15 @@ module jaguar
 	output              cart_ce_n,
 	input       [31:0]  cart_q,
 
-	output       [9:0]  bram_addr,
-	output      [15:0]  bram_data,
-	input       [15:0]  bram_q,
-	output              bram_wr,
+	output       [9:0]  cart_bram_addr,
+	output      [15:0]  cart_bram_data,
+	input       [15:0]  cart_bram_q,
+	output              cart_bram_wr,
+	output       [9:0]  cd_bram_addr,
+	output      [15:0]  cd_bram_data,
+	input       [15:0]  cd_bram_q,
+	output              cd_bram_wr,
 
-	output              vvs,
 	output              vga_vs_n,
 	output              vga_hs_n,
 	output              hblank,
@@ -83,20 +86,21 @@ module jaguar
 	input maxc,
 	input               auto_eeprom,
 	output      [23:0]  addr_ch3,
-	input        [9:0]  toc_addr,
-	input       [15:0]  toc_data,
+	input       [9:0]   toc_addr,
+	input      [15:0]   toc_data,
 	input               toc_wr,
+	input               toc_done,
 
 	output      [29:0]  audbus_out,
 	input       [63:0]  aud_in,
-	input       [63:0]  aud_cmp,
 	input               audwaitl,
 	output              aud_ce,
 	input               aud_busy,
-	input aud_sess,
-
+	input               aud_sess,
+	input               force_music_cd,
 	input               cd_en,
 	input               cd_ex,
+	input               cd_latency_en,
 	output              b_override,
 	input               dohacks,
 	output              xvclk_o,
@@ -109,15 +113,18 @@ module jaguar
 	input               turbo,
 	input               vintbugfix,
 
-	input ddreq,
+	input               ddreq,
 
-	output             m68k_clk,
-	output [22:0]      m68k_addr,
-	output [15:0]      m68k_bus_do,
-	input [15:0]       m68k_di,
-	input              gamedrive_enable,
-
-	input               ntsc
+	output              m68k_clk,
+	output [22:0]       m68k_addr,
+	output [15:0]       m68k_bus_do,
+	input [15:0]        m68k_di,
+	input               gamedrive_enable,
+	input               tom_pp_pixel_ce,
+	input               active_video,
+	input               fixed_blank,
+	input               ntsc,
+	input               crop_video
 );
 assign xvclk_o = xvclk;
 
@@ -156,15 +163,15 @@ wire xpclk;                         // Processor (Tom & Jerry) Clock.
 wire xvclk;                         // Video Clock.
 wire tlw;                           // Transparent Latch Write?
 
-reg cpu_toggle;                     // Toggles at 26.6MHz to act as an additional divider for the pixel clock and cpu.
+reg xresetl = 1'b1;
 
-reg old_reset = 1'b1;
-reg xresetl = 1'b0;
-
-reg ce_26_6_p0 = 1;
+reg ce_26_6_p0 = 0;
 reg ce_26_6_p1 = 0;
 reg ce_26_6_p2 = 0;
-reg ce_26_6_p3 = 0;
+reg ce_26_6_p3 = 1;
+wire [2:0] pix_ce_div;
+reg [2:0] pix_ce_div_reg = 0;
+wire pix_pp = ~|pix_ce_div_reg;
 
 always @(posedge sys_clk) begin
 	clkdiv <= clkdiv + 2'd1;
@@ -173,30 +180,30 @@ always @(posedge sys_clk) begin
 	ce_26_6_p2 <= ce_26_6_p1;
 	ce_26_6_p3 <= ce_26_6_p2;
 
-	if (ce_26_6_p3) begin
-		cpu_toggle <= ~cpu_toggle;
+	if (xvclk) begin
+		if (pix_pp) begin
+			pix_ce_div_reg <= |pix_ce_div[2:1] ? 1'b1 : pix_ce_div[0]; // Align the divider but don't allow it to go above 1 for filter/resolution purposes.
+		end else begin
+			pix_ce_div_reg <= pix_ce_div_reg - 1'd1;
+		end
 	end
 
-	old_reset <= xresetl_in;
-	// Reduce non-deterministic behavior.
-	if (xresetl_in && ce_26_6_p3 && cpu_toggle) begin
-		xresetl    <= 1;
-	end
-	// Just testing this; Might put back
-	if (old_reset && ~xresetl_in) begin
-		clkdiv <= 0;
-		ce_26_6_p0 <= 1;
+	xresetl <= xresetl_in;
+
+	// Reduce non-deterministic behavior. Start one before TLW, then tick, so we never miss an edge.
+	if (~xresetl && xresetl_in) begin
+		clkdiv <= 2'b10;
+		ce_26_6_p0 <= 0;
 		ce_26_6_p1 <= 0;
-		ce_26_6_p2 <= 0;
+		ce_26_6_p2 <= 1;
 		ce_26_6_p3 <= 0;
-		cpu_toggle <= 0;
-		xresetl    <= 0;
+		pix_ce_div_reg <= 0;
 	end
 end
 
 assign xvclk = ce_26_6_p0;// | ce_26_6_p1;
 assign tlw = ce_26_6_p3;                  // Transparent Latch Write. This really should just be negedge xvclk, but in our design we need it to be CE.
-assign vid_ce = xvclk & cpu_toggle;
+assign vid_ce = (xvclk & pix_pp);
 
 // TOM
 
@@ -241,6 +248,7 @@ wire            xba_in;
 wire            xbrl_out;
 wire            xbrl_oe;
 wire            xbrl_in;
+wire            tom_pp;
 
 // TOM - Outputs
 wire    [7:0]   xr;
@@ -387,15 +395,27 @@ wire            fx68k_data_z;
 
 wire            fx68k_bus_en = ~fx68k_as_n & fx68k_bgack_n;
 wire            fx68k_fc_en = turbo ? fx68k_bus_en : ~fx68k_fc_z;
-wire            fx68k_rw_en =  turbo ? fx68k_bus_en : ~fx68k_rw_z;
+// wire            fx68k_rw_en =  turbo ? fx68k_bus_en : ~fx68k_rw_z;
 wire            fx68k_address_en =  turbo ? fx68k_bus_en : ~fx68k_address_z;
 wire            fx68k_data_en = turbo ? (fx68k_bus_en & ~fx68k_rw) : ~fx68k_data_z;
 
 // EEPROM
-wire            ee_cs;
-wire            ee_sk;
-wire            ee_di;
-wire            ee_do;
+wire            cart_ee_cs;
+wire            cart_ee_sk;
+wire            cart_ee_di;
+wire            cart_ee_do;
+wire            cart_ee_do_oe;
+wire     [9:0]  cart_ee_bram_addr;
+wire    [15:0]  cart_ee_bram_data;
+wire            cart_ee_bram_wr;
+wire            cd_ee_cs;
+wire            cd_ee_sk;
+wire            cd_ee_di;
+wire            cd_ee_do;
+wire            cd_ee_do_oe;
+wire     [9:0]  cd_ee_bram_addr;
+wire    [15:0]  cd_ee_bram_data;
+wire            cd_ee_bram_wr;
 
 wire            refreq;
 wire            obbreq;
@@ -419,7 +439,8 @@ assign j_xwel_0 = xwel[0];              // Write Enable
 
 assign j_xdtackl = xdtackl;             // Data Acknowledge from Tom (also goes to the 68K)
 //assign j_xi2srxd = 1'b1;                // (Async?) I2S receive
-//assign j_xeint[0] = 1'b1;               // External Interrupt
+// External interrupt input follows Butch directly.
+assign j_xeint[0] = b_eint;
 assign j_xeint[1] = 1'b1;               // External Interrupt
 assign j_xtest = 1'b0;                  // "test" pins on both Tom and Jerry are tied to GND on the Jag
 assign j_xchrin = 1'b1;                 // Not used
@@ -523,10 +544,14 @@ assign j_xa_in[23:0] =
 reg [63:0] open_bus; // Chances are this should be capacitance based
 
 always @(posedge sys_clk) begin
-	open_bus <= dbus;
+	if (~xresetl) begin
+		open_bus <= 64'hFFFF_FFFF_FFFF_FFFF;
+	end else begin
+		open_bus <= dbus;
+	end
 end
 
-wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
+//wire fx68k_dout_en = fx68k_bus_en & ~fx68k_rw; // The xba_in signal is because I don't trust accurate timing of the fx68k signals so we use tom to de-slop it.
 
 // External Data Bus
 wire e_dbus_oe = ~xexpl & rw;
@@ -708,31 +733,31 @@ wire hsync_int = ~vga_hs_n; // active-high HSYNC
 wire vsync_int = ~vga_vs_n; // active-high VSYNC
 reg  prev_hs = 1'b0, prev_vs = 1'b0;
 
-always @(posedge xvclk or negedge xresetl) begin
-  if (!xresetl) begin
-    beam_x  <= 12'd0;
-    beam_y  <= 10'd0;
-    prev_hs <= 1'b0;
-    prev_vs <= 1'b0;
-  end else begin
-    prev_hs <= hsync_int;
-    prev_vs <= vsync_int;
-    
-    // new frame
-    if (~prev_vs && vsync_int) begin
-      beam_x <= 12'd0;
-      beam_y <= 10'd0;
-    end
-    // new line
-    else if (~prev_hs && hsync_int) begin
-      beam_x <= 12'd0;
-      beam_y <= beam_y + 10'd1;
-    end
-    // advance within line
-    else begin
-      beam_x <= beam_x + 12'd1;
-    end
-  end
+always @(posedge sys_clk) begin
+	if (!xresetl) begin
+		beam_x  <= 12'd0;
+		beam_y  <= 10'd0;
+		prev_hs <= 1'b0;
+		prev_vs <= 1'b0;
+	end else if (xvclk) begin
+		prev_hs <= hsync_int;
+		prev_vs <= vsync_int;
+
+		// new frame
+		if (~prev_vs && vsync_int) begin
+		beam_x <= 12'd0;
+		beam_y <= 10'd0;
+		end
+		// new line
+		else if (~prev_hs && hsync_int) begin
+		beam_x <= 12'd0;
+		beam_y <= beam_y + 10'd1;
+		end
+		// advance within line
+		else begin
+		beam_x <= beam_x + 12'd1;
+		end
+	end
 end
 
 // Lightgun instance
@@ -746,23 +771,24 @@ wire lg_enabled  = (lightgun_mode != 2'd0);
 wire lg_port_select = 1'b0; // Move to option?
 
 jaguar_lightgun lightgun_inst (
-    .clk(xvclk),
-    .reset(~xresetl),
-    .ntsc(ntsc),
-    .ps2_mouse(use_mouse ? ps2_mouse : 25'd0),
-    .joy_x(use_joy1 ? analog_0 : analog_2),
-    .joy_y(use_joy1 ? analog_1 : analog_3),
-    .use_joystick(use_joy1 || use_joy2),
-    .enable(lg_enabled),
-    .port_select(lg_port_select),
-    .crosshair_mode(lightgun_crosshair),
-    .cycle(beam_x),
-    .scanline(beam_y),
-    .vsync(vsync_int),
-    .blank(blank),
-    .lp0(lp0), 
-    .lp1(lp1),
-    .draw_crosshair(draw_crosshair)
+	.clk(sys_clk),
+	.ce(xvclk),
+	.reset(~xresetl),
+	.ntsc(ntsc),
+	.ps2_mouse(use_mouse ? ps2_mouse : 25'd0),
+	.joy_x(use_joy1 ? analog_0 : analog_2),
+	.joy_y(use_joy1 ? analog_1 : analog_3),
+	.use_joystick(use_joy1 || use_joy2),
+	.enable(lg_enabled),
+	.port_select(lg_port_select),
+	.crosshair_mode(lightgun_crosshair),
+	.cycle(beam_x),
+	.scanline(beam_y),
+	.vsync(vsync_int),
+	.blank(blank),
+	.lp0(lp0),
+	.lp1(lp1),
+	.draw_crosshair(draw_crosshair)
 );
 
 // Team Tap for Port 1
@@ -1031,7 +1057,7 @@ jag_controller_mux controller_mux_2
 
 reg [1:0] sp_out0;
 reg [1:0] sp_out1;
-wire [7:0] spthresh = spinner_speed[1] ? 12'h8<<spinner_speed : 12'h8>>spinner_speed;
+wire [7:0] spthresh = spinner_speed[1] ? 8'h8<<spinner_speed : 8'h8>>spinner_speed;
 
 always @(posedge sys_clk) begin
 	reg [1:0] sp_prev;
@@ -1040,54 +1066,64 @@ always @(posedge sys_clk) begin
 	reg [8:0] spinner_0_abs;
 	reg [8:0] spinner_1_abs;
 
-	if (spinner_0[7]) begin
-		spinner_0_abs <= -$signed(spinner_0[7:0]);
+	if (~xresetl) begin
+		sp_out0 <= 2'b00;
+		sp_out1 <= 2'b00;
+		sp_prev <= 2'b00;
+		accum_0 <= 12'd0;
+		accum_1 <= 12'd0;
+		spinner_0_abs <= 9'd0;
+		spinner_1_abs <= 9'd0;
 	end else begin
-		spinner_0_abs <= spinner_0[7:0];
-	end
-
-	if (spinner_1[7]) begin
-		spinner_1_abs <= -$signed(spinner_1[7:0]);
-	end else begin
-		spinner_1_abs <= spinner_1[7:0];
-	end
-
-	sp_prev <= {spinner_1[8], spinner_0[8]};
-	if (spinner_0[8] != sp_prev[0]) begin
-		accum_0 <= accum_0 + spinner_0_abs;
-	end
-
-	if (spinner_1[8] != sp_prev[1]) begin
-		accum_1 <= accum_1 + spinner_1_abs;
-	end
-
-	if (ce_26_6_p3) begin
-		if (accum_0 >= spthresh) begin
-			case({spinner_0[7], sp_out0})
-				{1'b1, 2'b00}: sp_out0 <= 2'b01;
-				{1'b1, 2'b01}: sp_out0 <= 2'b11;
-				{1'b1, 2'b11}: sp_out0 <= 2'b10;
-				{1'b1, 2'b10}: sp_out0 <= 2'b00;
-				{1'b0, 2'b00}: sp_out0 <= 2'b10;
-				{1'b0, 2'b10}: sp_out0 <= 2'b11;
-				{1'b0, 2'b11}: sp_out0 <= 2'b01;
-				{1'b0, 2'b01}: sp_out0 <= 2'b00;
-			endcase
-			accum_0 <= 0;
+		if (spinner_0[7]) begin
+			spinner_0_abs <= -$signed(spinner_0[7:0]);
+		end else begin
+			spinner_0_abs <= spinner_0[7:0];
 		end
 
-		if (accum_1 >= spthresh) begin
-			case({spinner_1[7], sp_out1})
-				{1'b1, 2'b00}: sp_out1 <= 2'b01;
-				{1'b1, 2'b01}: sp_out1 <= 2'b11;
-				{1'b1, 2'b11}: sp_out1 <= 2'b10;
-				{1'b1, 2'b10}: sp_out1 <= 2'b00;
-				{1'b0, 2'b00}: sp_out1 <= 2'b10;
-				{1'b0, 2'b10}: sp_out1 <= 2'b11;
-				{1'b0, 2'b11}: sp_out1 <= 2'b01;
-				{1'b0, 2'b01}: sp_out1 <= 2'b00;
-			endcase
-			accum_1 <= 0;
+		if (spinner_1[7]) begin
+			spinner_1_abs <= -$signed(spinner_1[7:0]);
+		end else begin
+			spinner_1_abs <= spinner_1[7:0];
+		end
+
+		sp_prev <= {spinner_1[8], spinner_0[8]};
+		if (spinner_0[8] != sp_prev[0]) begin
+			accum_0 <= accum_0 + spinner_0_abs;
+		end
+
+		if (spinner_1[8] != sp_prev[1]) begin
+			accum_1 <= accum_1 + spinner_1_abs;
+		end
+
+		if (ce_26_6_p3) begin
+			if (accum_0 >= spthresh) begin
+				case({spinner_0[7], sp_out0})
+					{1'b1, 2'b00}: sp_out0 <= 2'b01;
+					{1'b1, 2'b01}: sp_out0 <= 2'b11;
+					{1'b1, 2'b11}: sp_out0 <= 2'b10;
+					{1'b1, 2'b10}: sp_out0 <= 2'b00;
+					{1'b0, 2'b00}: sp_out0 <= 2'b10;
+					{1'b0, 2'b10}: sp_out0 <= 2'b11;
+					{1'b0, 2'b11}: sp_out0 <= 2'b01;
+					{1'b0, 2'b01}: sp_out0 <= 2'b00;
+				endcase
+				accum_0 <= 0;
+			end
+
+			if (accum_1 >= spthresh) begin
+				case({spinner_1[7], sp_out1})
+					{1'b1, 2'b00}: sp_out1 <= 2'b01;
+					{1'b1, 2'b01}: sp_out1 <= 2'b11;
+					{1'b1, 2'b11}: sp_out1 <= 2'b10;
+					{1'b1, 2'b10}: sp_out1 <= 2'b00;
+					{1'b0, 2'b00}: sp_out1 <= 2'b10;
+					{1'b0, 2'b10}: sp_out1 <= 2'b11;
+					{1'b0, 2'b11}: sp_out1 <= 2'b01;
+					{1'b0, 2'b01}: sp_out1 <= 2'b00;
+				endcase
+				accum_1 <= 0;
+			end
 		end
 	end
 end
@@ -1114,7 +1150,7 @@ end
 // 14     JOY8      JOY12     /ROW4 in
 // 15     PAD0Y     PAD1Y
 //
-assign joy[0] = ee_do;
+assign joy[0] = cart_ee_do_oe ? cart_ee_do : 1'b1;
 assign joy[7:1] = ~j_xjoy_in[3] ? u374_reg[7:1] : 7'b1111_111;      // Port 1, pins 4:2. / Port 2, pins 4:1.
 
 // Select the appropriate row data based on Team Tap configuration
@@ -1141,12 +1177,14 @@ assign b[6] = 1'b1;             // Unused open
 assign b[7] = 1'b0;             // Unused short
 
 always @(posedge sys_clk) begin
-	u374_clk_prev <= j_xjoy_in[2];
-	if (~u374_clk_prev & j_xjoy_in[2]) begin
-		u374_reg[7:0] <= e_dbus[7:0];
-	end
 	if (~xresetl) begin
+		u374_clk_prev <= 1'b1;
 		u374_reg[7:0] <= 8'b11111111;
+	end else begin
+		u374_clk_prev <= j_xjoy_in[2];
+		if (~u374_clk_prev & j_xjoy_in[2]) begin
+			u374_reg[7:0] <= e_dbus[7:0];
+		end
 	end
 end
 
@@ -1158,34 +1196,62 @@ assign joy_bus[15:8] = (~j_xjoy_in[0]) ? joy[15:8] : 8'b11111111; // Output enab
 assign joy_bus_oe = (~j_xjoy_in[0] | ~j_xjoy_in[1]);
 
 // EEPROM INTERFACE
-// Weird, but I don't see how it could work otherwise...
-assign ee_cs = cd_en ? b_ee_cs : j_xgpiol_in[1];
-assign ee_sk = cd_en ? b_ee_sk : j_xgpiol_in[0];
-assign ee_di = cd_en ? b_ee_din : dbus[0];
-wire ee_hintw = xwel[0];
-assign b_ee_dout = ee_do;
+assign cart_ee_cs = j_xgpiol_in[1];
+assign cart_ee_sk = j_xgpiol_in[0];
+assign cart_ee_di = dbus[0];
+wire cart_ee_hintw = xwel[0];
+// The CD-side 93C46 DO pin is pulled down on the board when the device is deselected.
+assign b_ee_dout = cd_ee_do_oe ? cd_ee_do : 1'b0;
+assign cd_ee_cs = b_ee_cs;
+assign cd_ee_sk = b_ee_sk;
+assign cd_ee_di = b_ee_din;
+assign cart_bram_addr = cart_ee_bram_addr;
+assign cart_bram_data = cart_ee_bram_data;
+assign cart_bram_wr = cart_ee_bram_wr;
+assign cd_bram_addr = cd_ee_bram_addr;
+assign cd_bram_data = cd_ee_bram_data;
+assign cd_bram_wr = cd_ee_bram_wr;
 
-// FIXME: ee_di should be e_dbus[0]. The schematic very clearly shows that the eternal bus is
+// FIXME: cart_ee_di should be e_dbus[0]. The schematic very clearly shows that the eternal bus is
 // connected to the cart slot and thus the EEPROM. However, when the eeprom's address is put onto
 // the address bus to trigger jerry's GPIO pins, it triggers tom to disconnect the external bus. I'm
 // uncertain how this worked on a real system, but I can only guess there was some kind of delay in
 // the eeprom's latching of DI.
 
-eeprom eeprom_inst
+eeprom cart_eeprom_inst
 (
 	.sys_clk (sys_clk),
 	.resetl  (xresetl),
-	.autosize(auto_eeprom && !cd_en),
-	.hintw   (ee_hintw),
-	.cs      (ee_cs),
-	.sk      (ee_sk),
-	.din     (ee_di),
-	.dout    (ee_do),
+	.autosize(auto_eeprom),
+	.hintw   (cart_ee_hintw),
+	.cs      (cart_ee_cs),
+	.sk      (cart_ee_sk),
+	.din     (cart_ee_di),
+	.dout    (cart_ee_do),
+	.dout_oe (cart_ee_do_oe),
 
-	.bram_addr( bram_addr ),
-	.bram_data( bram_data ),
-	.bram_q   ( bram_q ),
-	.bram_wr  ( bram_wr )
+	.bram_addr( cart_ee_bram_addr ),
+	.bram_data( cart_ee_bram_data ),
+	.bram_q   ( cart_bram_q ),
+	.bram_wr  ( cart_ee_bram_wr )
+);
+
+eeprom_93c46_x16 cd_eeprom_inst
+(
+	.sys_clk (sys_clk),
+	.resetl  (xresetl),
+	// .autosize(1'b0),
+	// .hintw   (1'b1),
+	.cs      (cd_ee_cs),
+	.sk      (cd_ee_sk),
+	.din     (cd_ee_di),
+	.dout    (cd_ee_do),
+	.dout_oe (cd_ee_do_oe),
+
+	.bram_addr( cd_ee_bram_addr ),
+	.bram_data( cd_ee_bram_data ),
+	.bram_q   ( cd_bram_q ),
+	.bram_wr  ( cd_ee_bram_wr )
 );
 
 assign abus_out[23:0] = {abus[23:3], xmaska[2:0]};
@@ -1201,6 +1267,11 @@ assign cart_oe_n[1] = xoel[1];
 
 // TOM
 wire tom_tlw;
+
+wire hblank_sig, vblank_sig;
+
+assign hblank = /*active_video ? (hblank_sig || ~hactive) :*/ hblank_sig;
+assign vblank = /*active_video ? (vblank_sig || ~vactive) :*/ vblank_sig;
 
 _tom tom_inst
 (
@@ -1270,11 +1341,14 @@ _tom tom_inst
 	.bbreq           (bbreq[1:0]),
 	.gbreq           (gbreq[1:0]),
 	.blank           (blank),
-	.hblank          (hblank),
-	.vblank          (vblank),
-//	.hsync           (vga_hs_n),
+	.hblank          (hblank_sig),
+	.vblank          (vblank_sig),
+	.hsync           (vga_hs_n),
 	.vsync           (vga_vs_n),
-	.vvs             (vvs),
+	.pix_ce_div      (pix_ce_div),
+	.fixed_blank     (fixed_blank),
+	.active_video    (active_video),
+	.crop_video      (crop_video),
 	.tlw             (tlw),
 	.ram_rdy         (ram_rdy),
 	.aen             (aen),
@@ -1288,11 +1362,12 @@ _tom tom_inst
 	.startwe         (startwe),
 	.atp             (dram_addrp[10:3]),
 	.vintbugfix      (vintbugfix),
-	.turbo           (turbo)
+	.turbo           (turbo),
+	.ntsc            (ntsc)
 );
 
-assign vga_hs_n = ~xhs_out;
-//assign vga_vs_n = ~xvs_out;
+// assign vga_hs_n = ~xhs_out;
+// assign vga_vs_n = ~xvs_out;
 
 wire audio_clk;
 wire jerry_tlw;
@@ -1302,7 +1377,7 @@ wire [15:0] dspwd;
 _j_jerry jerry_inst
 (
 	.xdspcsl         (j_xdspcsl),
-	.xpclkosc        (xvclk),
+	.xpclkosc        (j_xpclkosc),
 	.xpclkin         (j_xpclkin),
 	.xdbgl           (j_xdbgl),
 	.xoel_0          (j_xoel_0),
@@ -1384,6 +1459,7 @@ wire b_ee_cs;
 wire b_ee_sk;
 wire b_ee_dout;
 wire b_ee_din;
+wire b_eint;
 wire [31:0] cart_qt = b_doe ? b_dout : cart_q;
 _butch butch_inst
 (
@@ -1392,36 +1468,39 @@ _butch butch_inst
 	.cart_ce_n       (cart_ce_n),
 	.cd_en           (cd_en),
 	.cd_ex           (cd_ex),
+	.cd_latency_en   (cd_latency_en),
 	.eoe0l           (b_eoe0l),
 	.eoe1l           (b_eoe1l),
 	.ewe0l           (b_ewe0l),
 	.ewe2l           (b_ewe2l),
-	.ain             (xa_in[23:0]),
-	.din             (xd_in[31:0]),
+	.ain             (abus_out[23:0]), // abus_out?
+	.din             (xd_in[31:0]), // e_dbus[31:0]?
 	.dout            (b_dout[31:0]),
 	.doe             (b_doe),
 	.audbus_out      (audbus_out[29:0]),
 	.aud_in          (aud_in[63:0]),
-	.aud_cmp         (aud_cmp[63:0]),
+	.aud_cmp         (aud_in[63:0]),
 	.audwaitl        (audwaitl),
 	.aud_cbusy       (aud_busy),
 	.i2srxd          (j_xi2srxd),
-	.eint            (j_xeint[0]),
+	.eint            (b_eint),
 	.sen             (b_xsck_oe),
 	.sck             (b_xsck_out),
 	.ws              (b_xws_out),
 	.override        (b_override),
 	.aud_ce          (aud_ce),
 	.aud_sess        (aud_sess),
+	.force_music_cd  (force_music_cd),
+	.toc_addr        (toc_addr),
+	.toc_data        (toc_data),
+	.toc_wr          (toc_wr),
+	.toc_done        (toc_done),
 	.eeprom_cs       (b_ee_cs),
 	.eeprom_sk       (b_ee_sk),
 	.eeprom_dout     (b_ee_din),
 	.eeprom_din      (b_ee_dout),
 	.maxc            (maxc),
 	.addr_ch3        (addr_ch3[23:0]),
-	.toc_addr        (toc_addr),
-	.toc_data        (toc_data),
-	.toc_wr          (toc_wr),
 	.dohacks (dohacks),
 	.hackbus (hackbus),
 	.hackbus1 (hackbus1),
@@ -1548,7 +1627,7 @@ fx68k fx68k_inst
 	.IPL0n          (fx68k_ipl_n[0]),  // input
 	.IPL1n          (fx68k_ipl_n[1]),  // input
 	.IPL2n          (fx68k_ipl_n[2]),  // input
-	.iEdb           (fx68k_din),       // input
+	.iEdb           (m68k_di),       // input
 	.oEdb           (fx68k_dout),      // output
 	.eab            (fx68k_address)    // output
 );
@@ -1602,6 +1681,196 @@ i2s_receiver i2s_receiver_inst
 
 endmodule
 
+module eeprom_93c46_x16
+(
+	input  sys_clk,
+	input  resetl,
+	input  cs,
+	input  sk,
+	input  din,
+	output dout,
+	output dout_oe,
+
+	output       [9:0]  bram_addr,
+	output      [15:0]  bram_data,
+	input       [15:0]  bram_q,
+	output              bram_wr
+);
+
+`define EE93_IDLE      3'b000
+`define EE93_DATA      3'b001
+`define EE93_READ      3'b010
+`define EE93_FETCH     3'b011
+`define EE93_WR_BEGIN  3'b100
+`define EE93_WR_WRITE  3'b101
+`define EE93_WR_LOOP   3'b110
+`define EE93_WR_END    3'b111
+
+reg         sk_prev = 1'b0;
+reg         write_enable = 1'b0;
+reg [2:0]   status = `EE93_IDLE;
+reg [3:0]   cnt = 4'd0;
+reg [8:0]   ir = 9'd0;
+reg [15:0]  dr = 16'd0;
+reg         r_dout = 1'b1;
+reg [5:0]   rdaddr = 6'd0;
+reg [9:0]   wraddr = 10'd0;
+reg [15:0]  wrdata = 16'hFFFF;
+reg         wrloop = 1'b0;
+reg         bram_wr_r = 1'b0;
+reg         do_status_active = 1'b0;
+
+wire [8:0]  ir_next = {ir[7:0], din};
+wire [5:0]  ir_addr = ir[5:0];
+wire [5:0]  ir_next_addr = ir_next[5:0];
+
+assign dout = r_dout;
+assign dout_oe = cs && resetl;// &&
+				// ((status == `EE93_FETCH) || (status == `EE93_READ) || status[2] || do_status_active);
+assign bram_addr = status[2] ? wraddr :
+				   (status == `EE93_FETCH || status == `EE93_READ) ? {4'h0, rdaddr} :
+				   {4'h0, ir[4:0], din};
+assign bram_data = wrdata;
+assign bram_wr = bram_wr_r;
+
+always @(posedge sys_clk) begin
+	sk_prev <= sk;
+	bram_wr_r <= 1'b0;
+
+	if (!resetl) begin
+		status <= `EE93_IDLE;
+		cnt <= 4'd0;
+		ir <= 9'd0;
+		dr <= 16'd0;
+		r_dout <= 1'b1;
+		rdaddr <= 6'd0;
+		wraddr <= 10'd0;
+		wrdata <= 16'hFFFF;
+		wrloop <= 1'b0;
+		write_enable <= 1'b0;
+		do_status_active <= 1'b0;
+	end else if (status == `EE93_FETCH) begin
+		dr <= bram_q;
+		r_dout <= 1'b0; // Dummy/turnaround bit before the first data bit.
+		status <= `EE93_READ;
+	end else if (status[2]) begin
+		// CD software strobes CS after a completed write command and expects the
+		// EEPROM to keep its internal write/busy state alive across that pulse.
+		case (status)
+			`EE93_WR_BEGIN: begin
+				do_status_active <= 1'b1;
+				r_dout <= 1'b0; // Busy while the internal write is active.
+				status <= `EE93_WR_WRITE;
+				if (ir[8:6] == 3'b111) begin
+					// ERASE
+					wraddr <= {4'h0, ir_addr};
+					wrloop <= 1'b0;
+					wrdata <= 16'hFFFF;
+				end else if (ir[8:6] == 3'b101) begin
+					// WRITE
+					wraddr <= {4'h0, ir_addr};
+					wrloop <= 1'b0;
+					wrdata <= dr;
+				end else if (ir[8:4] == 5'b10010) begin
+					// ERAL
+					wraddr <= 10'd0;
+					wrloop <= 1'b1;
+					wrdata <= 16'hFFFF;
+				end else if (ir[8:4] == 5'b10001) begin
+					// WRAL
+					wraddr <= 10'd0;
+					wrloop <= 1'b1;
+					wrdata <= dr;
+				end
+			end
+
+			`EE93_WR_WRITE: begin
+				if (write_enable) begin
+					bram_wr_r <= 1'b1;
+				end
+				status <= `EE93_WR_LOOP;
+			end
+
+			`EE93_WR_LOOP: begin
+				if (!wrloop) begin
+					status <= `EE93_WR_END;
+				end else begin
+					wraddr <= wraddr + 10'd1;
+					if (wraddr[5:0] == 6'h3F) begin
+						status <= `EE93_WR_END;
+					end else begin
+						status <= `EE93_WR_WRITE;
+					end
+				end
+			end
+
+			`EE93_WR_END: begin
+				r_dout <= 1'b1;
+				status <= `EE93_IDLE;
+			end
+		endcase
+	end else if (!cs) begin
+		// CS low resets only the serial front-end. Internal write state is
+		// handled above so a post-write CS strobe does not cancel the write.
+		status <= `EE93_IDLE;
+		cnt <= 4'd0;
+		ir <= 9'd0;
+		dr <= 16'd0;
+		r_dout <= 1'b1;
+		rdaddr <= 6'd0;
+		wraddr <= 10'd0;
+		wrdata <= 16'hFFFF;
+		wrloop <= 1'b0;
+		do_status_active <= 1'b0;
+	end else if (~sk_prev & sk) begin
+		if (status == `EE93_IDLE) begin
+			ir <= ir_next;
+			if (cnt == 4'd8) begin
+				cnt <= 4'd0;
+				if (ir_next[8]) begin
+					if (ir_next[7:6] == 2'b10) begin
+						// READ
+						rdaddr <= ir_next_addr;
+						status <= `EE93_FETCH;
+					end else if (ir_next[7:6] == 2'b01) begin
+						// WRITE
+						status <= write_enable ? `EE93_DATA : `EE93_IDLE;
+					end else if (ir_next[7:6] == 2'b11) begin
+						// ERASE
+						status <= write_enable ? `EE93_WR_BEGIN : `EE93_IDLE;
+					end else if (ir_next[5:4] == 2'b11) begin
+						// EWEN
+						write_enable <= 1'b1;
+					end else if (ir_next[5:4] == 2'b00) begin
+						// EWDS
+						write_enable <= 1'b0;
+					end else if (ir_next[5:4] == 2'b10) begin
+						// ERAL
+						status <= write_enable ? `EE93_WR_BEGIN : `EE93_IDLE;
+					end else if (ir_next[5:4] == 2'b01) begin
+						// WRAL
+						status <= write_enable ? `EE93_DATA : `EE93_IDLE;
+					end
+				end
+			end else begin
+				cnt <= cnt + 4'd1;
+			end
+		end else if (status == `EE93_DATA) begin
+			dr <= {dr[14:0], din};
+			cnt <= cnt + 4'd1;
+			if (cnt == 4'd15) begin
+				status <= `EE93_WR_BEGIN;
+				cnt <= 4'd0;
+			end
+		end else if (status == `EE93_READ) begin
+			r_dout <= dr[15];
+			dr <= {dr[14:0], 1'b0};
+		end
+	end
+end
+
+endmodule
+
 module eeprom
 (
 	input  sys_clk,
@@ -1612,6 +1881,7 @@ module eeprom
 	input  sk,
 	input  din,
 	output dout,
+	output dout_oe,
 
 	output       [9:0]  bram_addr,
 	output      [15:0]  bram_data,
@@ -1641,6 +1911,7 @@ reg [12:0]   ir = 13'd0;           // Instruction Register
 reg [15:0]   dr = 16'd0;           // Data Register
 reg          r_dout = 1'b1;        // Data Out
 assign       dout = r_dout;
+assign       dout_oe = cs && resetl;
 
 reg [9:0]    wraddr = 10'b0000000000;
 reg [15:0]   wrdata = 16'hFFFF;

@@ -108,7 +108,7 @@ begin
 end
 
 // DATAMUX.NET (209) - sfen\ : iv
-assign sfen_n = ~s_coarse[0];
+// assign sfen_n = ~s_coarse[0];
 
 // DATAMUX.NET (210) - sfine : dech38el
 // Bit shift is slow

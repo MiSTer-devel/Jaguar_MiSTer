@@ -61,6 +61,8 @@ module _tom
 	output xdtackl,
 	output xintl,
 	// below signals NOT_NETLIST
+	input fixed_blank,
+	input active_video,
 	output hs_o,
 	output hhs_o,
 	output vs_o,
@@ -74,7 +76,7 @@ module _tom
 	output hblank,
 	output hsync,
 	output vsync,
-	output vvs,
+	output [2:0] pix_ce_div,
 	input tlw,
 	input ram_rdy,
 	output aen,
@@ -86,9 +88,11 @@ module _tom
 	output [7:0] we,
 	output startwep,
 	output startwe,
-	output [10:3] atp,	
+	output [10:3] atp,
 	input turbo,
-	input vintbugfix,	
+	input vintbugfix,
+	input ntsc,
+	input crop_video,
 	output wire hsl,
 	output wire vsl
 );
@@ -430,7 +434,7 @@ assign xd_oe[15:0] = {16{den_obuf[0]}};
 assign din[15:0] = xd_in[15:0];
 // nt = nand tree appears to be for factory testing only
 // Should probably remove. Likely to cause timing problems.
-// If kept, chain can likely be safely broken up in steps to help timing. 
+// If kept, chain can likely be safely broken up in steps to help timing.
 // Since test is grounded nt[17] is always 1 and nt[16:1] don't matter.
 assign nt[78] = ~(xd_in[0] & nt[77]); //
 assign nt[74] = ~(xd_in[1] & nt[73]); //
@@ -850,6 +854,7 @@ _vid vid_inst
 	.vey /* IN */ (vey),
 	.vly /* IN */ (vly),
 	.lock /* IN */ (lock),
+	.ntsc /* IN */ (ntsc), // Not in netlist
 	.start /* OUT */ (start),
 	.dd /* OUT */ (dd),
 	.lbufa /* OUT */ (lbufa),
@@ -861,10 +866,13 @@ _vid vid_inst
 	.vactive /* OUT */ (vactive),
 	.blank /* OUT */ (blank_obuf),
 	.hblank_out     (hblank),
-	.vblank_out      (vblank),
+	.vblank_out     (vblank),
+	.pix_ce_div     (pix_ce_div),
+	.fixed_blank    (fixed_blank),
+	.active_video   (active_video),
+	.crop_video     (crop_video),
 	.hsync_out      (hsync),
 	.vsync_out      (vsync),
-	.vvs_o          (vvs),
 	.nextpixa /* OUT */ (nextpixa),
 	.nextpixd /* OUT */ (nextpixd),
 	.cry16 /* OUT */ (cry16),
@@ -951,7 +959,7 @@ _dbus dbus_inst
 	.sys_clk(sys_clk) // Generated
 );
 
-assign atp[10:3] = at[10:3]; 
+assign atp[10:3] = at[10:3];
 // TOM.NET (369) - abus : abus
 _abus abus_inst
 (
@@ -1379,7 +1387,7 @@ assign dr_out[8:0] = (dr_gpu_oe ? dr_gpu_out[8:0] : 9'h0)
                    | (dr_lbuf_oe ? dr_lbuf_out[8:0] : 9'h0)
                    | (dr_misc_oe ? dr_misc_out[8:0] : 9'h0);
 assign dr_8_0_oe = dr_gpu_oe | dr_vid_11_0_oe | dr_pix_8_0_oe | dr_abus_oe | dr_ob_oe | dr_obdata_oe | dr_lbuf_oe | dr_misc_oe;
-						 
+
 assign dr_out[11:9] = (dr_gpu_oe ? dr_gpu_out[11:9] : 3'h0)
                     | (dr_vid_11_0_oe ? dr_vid_out[11:9] : 3'h0)
                     | (dr_abus_oe ? dr_abus_out[11:9] : 3'h0)
@@ -1402,4 +1410,3 @@ assign dr_15_12_oe = dr_gpu_oe | dr_vid_15_12_oe | dr_abus_oe | dr_ob_oe | dr_ob
 assign justify_out = (justify_gpu_oe ? justify_gpu_out : 1'b0) | (justify_mem_oe ? justify_mem_out : 1'b0) | (justify_ob_oe ? justify_ob_out : 1'b0);
 assign justify_oe = justify_gpu_oe | justify_mem_oe | justify_ob_oe;
 endmodule
-

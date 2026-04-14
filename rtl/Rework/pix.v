@@ -87,7 +87,7 @@ wire [7:0] r_obuf;
 wire [7:0] g_obuf;
 wire [7:0] b_obuf;
 
-wire clk = vclk; 
+wire clk = vclk;
 reg old_clk;
 reg old_resetl;
 always @(posedge sys_clk)

@@ -1,0 +1,2 @@
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) butch.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) butch_i2s.v ]

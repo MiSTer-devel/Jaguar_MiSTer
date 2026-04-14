@@ -2,7 +2,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE Jaguar.sv
 set_global_assignment -name SDC_FILE           Jaguar.sdc
 
 set_global_assignment -name QIP_FILE           rtl/jaguar/jaguar.qip
-set_global_assignment -name QIP_FILE           rtl/fx68k/fx68k.qip
 
 set_global_assignment -name VERILOG_FILE       rtl/jag_controller_mux.v
 set_global_assignment -name VERILOG_FILE       rtl/ps2_mouse.v

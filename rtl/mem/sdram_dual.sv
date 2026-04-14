@@ -8,18 +8,18 @@
 // This source file is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version. 
+// (at your option) any later version.
 //
 // This source file is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of 
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the 
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
-// You should have received a copy of the GNU General Public License 
+// You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-// This module is highly specialized to match Jaguar. 
+// This module is highly specialized to match Jaguar.
 // Ch1 is geared for DRAM and requires using ras/cas addresses and refresh commands. Uses BA 0x0X only.
 // Ch2 is geared for ROM and uses BA 0x1X only. Assumes refresh provided by Ch1 or self_refresh on.
 
@@ -44,7 +44,7 @@ module sdram
 	inout  reg [15:0] SDRAM_DQ,    // 16 bit bidirectional data bus
 	output reg [12:0] SDRAM_A,     // 13 bit multiplexed address bus
 	output            SDRAM_DQML,  // two byte masks
-	output            SDRAM_DQMH,  // 
+	output            SDRAM_DQMH,  //
 	output reg  [1:0] SDRAM_BA,    // two banks
 	output            SDRAM_nCS,   // a single chip select
 	output            SDRAM_nWE,   // write enable
@@ -67,7 +67,7 @@ module sdram
 	input      [7:0]  ch1_be,      // Byte enable (bits) for burst writes. TODO
 	output reg        ch1_ready,
 	input             ch1_64,
-	
+
 	input      [23:1] ch2_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
 	input             ch2_addr_ext,// Use top of SDRAM if chip is 64MB (ignored if 32MB)
 	output reg [31:0] ch2_dout,    // data output to cpu
@@ -76,14 +76,14 @@ module sdram
 	input             ch2_rnw,     // 1 - read, 0 - write
 	input      [1:0]  ch2_be,      // Byte enable (bits) for writes.
 	output reg        ch2_ready,
-	
+
 	input      [23:0] ch3_addr,    // 24 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
 	output reg [31:0] ch3_dout,    // data output to cpu
 	input      [31:0] ch3_din,     // data input from cpu
 	input             ch3_req,     // request
 	input             ch3_rnw,     // 1 - read, 0 - write
 	output reg        ch3_ready,
-	
+
 	output reg        ram64,
 
 	input             self_refresh // 1 - self control, 0 - refresh on ch1_ref
@@ -156,7 +156,7 @@ always @(posedge clk) begin
 	reg  [4:0] state = STATE_STARTUP;
 	reg  [7:0] saved_mask;
 	reg [10:3] saved_addr;
-	
+
 	reg [15:0] ch2_data;
 	reg [23:1] ch2_add;
 	reg        ch2_add_ext;
@@ -184,7 +184,7 @@ always @(posedge clk) begin
 	data_ready_delay2 <= data_ready_delay2>>1;
 
 	dq_reg <= SDRAM_DQ;
-	
+
 	// MSB Byte is read/written FIRST now. ElectronAsh.
 	if(data_ready_delay1[3]) ch1_dout[31:16] <= dq_reg;
 	if(data_ready_delay1[2]) ch1_dout[15:00] <= dq_reg;
@@ -192,13 +192,13 @@ always @(posedge clk) begin
 	if(data_ready_delay1[0]) ch1_dout[47:32] <= dq_reg;
 	if(data_ready_delay1[2] && ~ch1_64) ch1_ready <= 1;
 	if(data_ready_delay1[0] && ch1_64) ch1_ready <= 1;
-	
+
 	if(data_ready_delay2[1]) ch2_dout[31:16] <= dq_reg;
 	if(data_ready_delay2[0]) ch2_dout[15:00] <= dq_reg;
 	if(data_ready_delay2[0]) ch2_ready <= 1;
 
 	SDRAM_DQ <= 16'bZ;
-	
+
 	if (ch2_req) begin
 		ch2_rq      <= 1;
 		ch2_data    <= ch2_din;
@@ -212,7 +212,7 @@ always @(posedge clk) begin
 		saved_addr <= ch1_addr;
 	end
 	ch3_ready <= 0;
-	
+
 
 	command <= CMD_NOP;
 	case (state)
@@ -296,7 +296,7 @@ always @(posedge clk) begin
 
 		STATE_RFSH: begin
 			//------------------------------------------------------------------------
-			//-- Start the refresh cycle. 
+			//-- Start the refresh cycle.
 			//-- This tasks tRFC (66ns), so 7 idle cycles are needed @ 120MHz
 			//------------------------------------------------------------------------
 			state    <= STATE_IDLE_6;
@@ -381,7 +381,7 @@ always @(posedge clk) begin
 			state <= STATE_RW1;	// Wait state (NOP) for CL=2.
 										// CL=3 would need an extra wait state here, I think? ElectronAsh.
 		end
-		
+
 		STATE_RW1: begin
 			SDRAM_A <= cas_addr;
 			if(saved_wr) begin
@@ -412,7 +412,7 @@ always @(posedge clk) begin
 				state   <= STATE_IDLE_4;
 			end;
 		end
-		
+
 		STATE_RW3: begin
 			state       <= STATE_RW4;
 			command     <= CMD_WRITE;
@@ -434,17 +434,17 @@ always @(posedge clk) begin
 		STATE_ACT1: begin
 			state      <= STATE_ACT2;
 		end
-		
+
 		STATE_ACT2: begin
 			{SDRAM_BA,SDRAM_A} <= {2'b01,ch1_caddr[12:0]}; // no auto precharge
 			command    <= CMD_ACTIVE;
 			state      <= STATE_IDLE;
 		end
-		
+
 		STATE_PRE1: begin
 			state      <= STATE_PRE2;
 		end
-		
+
 		STATE_PRE2: begin
 			{SDRAM_BA,SDRAM_A} <= {2'b01,2'b00,1'b0,10'h0}; // no auto precharge
 			command    <= CMD_PRECHARGE;
@@ -464,7 +464,7 @@ always @(posedge clk) begin
 		ch2_ready <= 0;
 	end
 end
-wire [3:0] ch_tmp = ch2_addr[23:20]==4'h5 ? ch3_addr[23:20] : ch2_addr[23:20]==4'h4 ? ch3_addr[19:16] : ch2_addr[23:20]==4'h3 ? ch3_addr[15:12] 
+wire [3:0] ch_tmp = ch2_addr[23:20]==4'h5 ? ch3_addr[23:20] : ch2_addr[23:20]==4'h4 ? ch3_addr[19:16] : ch2_addr[23:20]==4'h3 ? ch3_addr[15:12]
                   : ch2_addr[23:20]==4'h2 ? ch3_addr[11:8]  : ch2_addr[23:20]==4'h1 ? ch3_addr[7:4]   : ch2_addr[23:20]==4'h0 ? ch3_addr[3:0]
 						: ch2_addr[23:20];
 
@@ -498,51 +498,94 @@ endmodule
 module spram_byte_32x15
 (
 	input             clk,
-	input      [15:0] addr,
+	input      [14:0] addr,
 	output     [31:0] dout,
 	input      [31:0] din,
-	input      [3:0]  wr
+	input      [3:0]  wr,
+
+	input      [14:0] addr_b,
+	output     [31:0] dout_b,
+	input      [31:0] din_b,
+	input      [3:0]  wr_b,
+
+	input             use_16_bit,
+	input      [15:0] addr_16,
+	output     [15:0] dout_16,
+	input      [15:0] din_16,
+	input      [1:0]  wr_16,
+
+	input      [15:0] addr_b_16,
+	output     [15:0] dout_b_16,
+	input      [15:0] din_b_16,
+	input      [1:0]  wr_b_16
 );
 
-spram #(.addr_width(15), .data_width(8)) dram_bram_inst0
+// Register the LSB to align the output mux with dpram's registered q outputs
+logic addr_16_lsb_r, addr_b_16_lsb_r;
+always_ff @(posedge clk) begin
+	addr_16_lsb_r   <= addr_16[0];
+	addr_b_16_lsb_r <= addr_b_16[0];
+end
+
+// Even address (LSB=0) → upper half [31:16]; odd (LSB=1) → lower half [15:0]
+assign dout_16   = addr_16_lsb_r   ? dout[15:0]   : dout[31:16];
+assign dout_b_16 = addr_b_16_lsb_r ? dout_b[15:0] : dout_b[31:16];
+
+dpram #(.addr_width(15), .data_width(8)) dram_bram_inst0
 (
-	.clock   ( clk ),
+	.clock     ( clk ),
 
-	.address ( addr[14:0] ),
-	.data    ( din[31:24] ),
-	.wren    ( wr[3] ),
+	.address_a ( use_16_bit ? addr_16[15:1] : addr ),
+	.data_a    ( use_16_bit ? din_16[15:8]  : din[31:24] ),
+	.wren_a    ( use_16_bit ? (~addr_16[0]  & wr_16[1])  : wr[3] ),
+	.q_a       ( dout[31:24] ),
 
-	.q       ( dout[31:24] )
+	.address_b ( use_16_bit ? addr_b_16[15:1] : addr_b ),
+	.data_b    ( use_16_bit ? din_b_16[15:8]  : din_b[31:24] ),
+	.wren_b    ( use_16_bit ? (~addr_b_16[0]  & wr_b_16[1])  : wr_b[3] ),
+	.q_b       ( dout_b[31:24] )
 );
-spram #(.addr_width(15), .data_width(8)) dram_bram_inst1
+dpram #(.addr_width(15), .data_width(8)) dram_bram_inst1
 (
-	.clock   ( clk ),
+	.clock     ( clk ),
 
-	.address ( addr[14:0] ),
-	.data    ( din[23:16] ),
-	.wren    ( wr[2] ),
+	.address_a ( use_16_bit ? addr_16[15:1] : addr ),
+	.data_a    ( use_16_bit ? din_16[7:0]   : din[23:16] ),
+	.wren_a    ( use_16_bit ? (~addr_16[0]  & wr_16[0])  : wr[2] ),
+	.q_a       ( dout[23:16] ),
 
-	.q       ( dout[23:16] )
+	.address_b ( use_16_bit ? addr_b_16[15:1] : addr_b ),
+	.data_b    ( use_16_bit ? din_b_16[7:0]   : din_b[23:16] ),
+	.wren_b    ( use_16_bit ? (~addr_b_16[0]  & wr_b_16[0])  : wr_b[2] ),
+	.q_b       ( dout_b[23:16] )
 );
-spram #(.addr_width(15), .data_width(8)) dram_bram_inst2
+dpram #(.addr_width(15), .data_width(8)) dram_bram_inst2
 (
-	.clock   ( clk ),
+	.clock     ( clk ),
 
-	.address ( addr[14:0] ),
-	.data    ( din[15:8] ),
-	.wren    ( wr[1] ),
+	.address_a ( use_16_bit ? addr_16[15:1] : addr ),
+	.data_a    ( use_16_bit ? din_16[15:8]  : din[15:8] ),
+	.wren_a    ( use_16_bit ? (addr_16[0]   & wr_16[1])  : wr[1] ),
+	.q_a       ( dout[15:8] ),
 
-	.q       ( dout[15:8] )
+	.address_b ( use_16_bit ? addr_b_16[15:1] : addr_b ),
+	.data_b    ( use_16_bit ? din_b_16[15:8]  : din_b[15:8] ),
+	.wren_b    ( use_16_bit ? (addr_b_16[0]   & wr_b_16[1])  : wr_b[1] ),
+	.q_b       ( dout_b[15:8] )
 );
-spram #(.addr_width(15), .data_width(8)) dram_bram_inst3
+dpram #(.addr_width(15), .data_width(8)) dram_bram_inst3
 (
-	.clock   ( clk ),
+	.clock     ( clk ),
 
-	.address ( addr[14:0] ),
-	.data    ( din[7:0] ),
-	.wren    ( wr[0] ),
+	.address_a ( use_16_bit ? addr_16[15:1] : addr ),
+	.data_a    ( use_16_bit ? din_16[7:0]   : din[7:0] ),
+	.wren_a    ( use_16_bit ? (addr_16[0]   & wr_16[0])  : wr[0] ),
+	.q_a       ( dout[7:0] ),
 
-	.q       ( dout[7:0] )
+	.address_b ( use_16_bit ? addr_b_16[15:1] : addr_b ),
+	.data_b    ( use_16_bit ? din_b_16[7:0]   : din_b[7:0] ),
+	.wren_b    ( use_16_bit ? (addr_b_16[0]   & wr_b_16[0])  : wr_b[0] ),
+	.q_b       ( dout_b[7:0] )
 );
 endmodule
 

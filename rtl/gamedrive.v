@@ -19,9 +19,15 @@ module gamedrive (
 
 	localparam integer BLOB_BYTES = 16'h0180;
 
-	wire in_range = (addr == ADDR_CMD) | (addr == ADDR_DATA) | (addr == ADDR_DATA8);
+	//wire reg_select = addr[23:8] == 16'hF160;
 
-	assign oe = in_range & enable & rd;
+	wire addr_cmd = cs & (addr[11:0] == 12'h002);
+	wire addr_data = cs & (addr[11:0] == 12'h004);
+	wire addr_data8 = cs & (addr[11:0] == 12'h005);
+
+	wire in_range = addr_cmd | addr_data | addr_data8;
+
+	assign oe = 1'b0;//in_range & enable & rd;
 
 	// Status bits consumed by RAPTOR_GD_Init:
 	// CMD[15] busy: keep low for no-wait behavior
@@ -116,13 +122,13 @@ module gamedrive (
 
 				// The sync bit seems to follow a specific handshake dance and not just toggle on every access.
 				if (wr) begin
-					if (addr == ADDR_CMD) begin
+					if (addr_cmd) begin
 						if (wdata == 16'h0010) sync_bit3 <= 1'b0;
 						if (wdata == 16'h0011) sync_bit3 <= 1'b1;
 						if (wdata == 16'h0000) sync_bit3 <= 1'b0;
 					end
 
-					if (addr == ADDR_DATA) begin
+					if (addr_data) begin
 						if (!download_mode) begin
 							// Start a new XFER16 on first DATA write.
 							if (!xfer_active) begin
@@ -137,11 +143,11 @@ module gamedrive (
 				end
 
 				if (rd) begin
-					if (addr == ADDR_CMD) begin
+					if (addr_cmd) begin
 						rdata <= cmd_status;
-					end else if (addr == ADDR_DATA) begin
+					end else if (addr_data) begin
 						rdata <= 16'h0000;
-					end else if (addr == ADDR_DATA8) begin
+					end else if (addr_data8) begin
 						if (!download_mode) begin
 							if (xfer_active && !xfer_phase) begin
 								rdata      <= {8'h00, xfer_word[15:8]};
