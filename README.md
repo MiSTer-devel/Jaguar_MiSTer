@@ -58,16 +58,16 @@ I added a Turbo option for the 68000 to the MiSTer OSD, which does help speed up
 
 It does not speed up the main "Tom and Jerry" custom chips, though, except for reducing wait states on ROM/BIOS access.
 
-If a game doesn't work try turning on max compatibility or loading more than once.
+If a game doesn't work try turning on max compatibility, homebrew support or loading more than once.
+
+Jaglink over SNAC works. Rx is on User In 0 and Tx is on User Out 1.
 
 In summary: still a fair bit of work to be done. lol
 
 ElectronAsh.
 
 Remaining tasks (No guarantees to complete)
-- Data streaming through MiSTer Main (seems functional - needs more testing)
-- Opening OSD can crash data streaming (bigger cache might help)
-- Memory Track working (using Romulator/Alpine version - AMD or Atmel versions not needed?). Save data is not hooked up to SD card
+-- Memory Track working (using Romulator/Alpine version - AMD or Atmel versions not needed?). Save data is not hooked up to SD card
 - Weird timing display in VLM. Drops digits
 - CD-G support
 - DSP sometimes does not come up correctly even after reboot
