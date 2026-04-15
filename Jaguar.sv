@@ -278,7 +278,7 @@ localparam CONF_STR = {
 	// Input Options
 	"P2,Input Options;",
 	"P2-;",
-	"P2O[85],Numstick,On,Off;",
+	"P2O[85],Numstick,Off,On;",
 	"P2O[83],Keyboard As P1,Off,On;",
 	"P2O[86],Swap P1/P2,Off,On;",
 	"P2-;",
@@ -338,6 +338,7 @@ localparam CONF_STR = {
 	"Inf06,",
 	"Inf07,",
 	"Inf08,",
+	"v,2;", // Increment to reset settings to defaults
 	"V,v",`BUILD_DATE
 };
 
@@ -929,7 +930,7 @@ reg p1p2pause_active;
 reg old_ps2_stb = 0;
 reg [20:0] keyboard_joystick = 0;
 wire keyboard_joystick_en = status[83];
-wire numstick_en = !status[85];
+wire numstick_en = status[85];
 wire swap_p1p2 = status[86];
 wire [31:0] joystick_p1 = swap_p1p2 ? joystick_1 : joystick_0;
 wire [31:0] joystick_p2 = swap_p1p2 ? joystick_0 : joystick_1;

@@ -6,7 +6,7 @@
 //  128        127:96          95:64         63:32         31:0
 // Integer values are in BIG endian byte order, so it up to the loader
 // or generator of the code to re-arrange them correctly.
-`define CHEATS_DISABLED
+//`define CHEATS_DISABLED
 
 module CODES(
 	input  clk,        // Best to not make it too high speed for timing reasons
