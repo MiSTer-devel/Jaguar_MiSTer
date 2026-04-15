@@ -1496,7 +1496,6 @@ _butch butch_inst
 	.toc_data        (toc_data),
 	.toc_wr          (toc_wr),
 	.toc_done        (toc_done),
-	.lid_closed      (1'b1),
 	.eeprom_cs       (b_ee_cs),
 	.eeprom_sk       (b_ee_sk),
 	.eeprom_dout     (b_ee_din),

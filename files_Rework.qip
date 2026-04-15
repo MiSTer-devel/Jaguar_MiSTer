@@ -12,6 +12,8 @@ set_global_assignment -name VERILOG_FILE       rtl/ps2_mouse.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/auto_crt_ar.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/jag_lightgun.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/numstick.sv
+set_global_assignment -name VERILOG_FILE       rtl/eeprom_93c46_x16.v
+set_global_assignment -name VERILOG_FILE       rtl/tda1545a.v
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cheatcodes.sv
 
