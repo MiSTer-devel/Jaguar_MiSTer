@@ -13,6 +13,7 @@ module gamedrive (
 	output wire        oe
 );
 
+	localparam [23:0] ADDR_BASE  = 24'hF16000;
 	localparam [23:0] ADDR_CMD   = 24'hF16002;
 	localparam [23:0] ADDR_DATA  = 24'hF16004;
 	localparam [23:0] ADDR_DATA8 = 24'hF16005;
@@ -21,13 +22,14 @@ module gamedrive (
 
 	//wire reg_select = addr[23:8] == 16'hF160;
 
+	wire addr_base = cs & (addr[11:0] == 12'h000);
 	wire addr_cmd = cs & (addr[11:0] == 12'h002);
 	wire addr_data = cs & (addr[11:0] == 12'h004);
 	wire addr_data8 = cs & (addr[11:0] == 12'h005);
 
-	wire in_range = addr_cmd | addr_data | addr_data8;
+	wire in_range = addr_cmd | addr_data | addr_data8 | addr_base;
 
-	assign oe = 1'b0;//in_range & enable & rd;
+	assign oe = in_range & enable & rd;
 
 	// Status bits consumed by RAPTOR_GD_Init:
 	// CMD[15] busy: keep low for no-wait behavior
@@ -145,7 +147,7 @@ module gamedrive (
 				if (rd) begin
 					if (addr_cmd) begin
 						rdata <= cmd_status;
-					end else if (addr_data) begin
+					end else if (addr_data || addr_base) begin
 						rdata <= 16'h0000;
 					end else if (addr_data8) begin
 						if (!download_mode) begin

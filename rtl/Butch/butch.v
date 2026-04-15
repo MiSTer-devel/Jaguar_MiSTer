@@ -270,6 +270,30 @@ wire cdkartpullreset = butch_reg[0][20];
 // 70h DAC mode             - mode  - DAC mode
 // F0h Servo Version Number - servo - Servo version number
 
+//Data transfer
+// Tdsl = data stable before STB low = 50 nsec min
+// Tdnb = STB low after ACK high = 50 nsec min
+//Communication Acknowledge
+// Tcsl = data stable before STB low = 50 nsec min
+//-Therefore minimum round trip communication = (50+50) * 16 * 2 + 50 = 50*65 = 3250 ns
+//-This assumes instant reply with no processing overhead
+//-At 26.5909MHz *4 (sysclk). 26.5909*4*3.25 = 345 sys clocks
+//-The actual DSA clock likely to be running slower (min times of 50ns imply controller running at ~20MHz)
+//-Code in CD_getoc 
+//	or.w	#$1400,d0
+//	move.w	d0,O_DS_DATA(a4)	;send Full TOC command word
+//... <Commented out code>
+//	tst.w	O_DS_DATA(a4)		;else,  
+//-Seems to imply it should not have completed this quickly
+//-Minimum number of clocks is likely ~500 cycles; possibly significantly more
+//-Implies a clock lower than 20MHz or each state taking longer than a controller cycle
+//-CD Data is decoding at 352800*8 = 2.822400 MHz effective data at double rate (actually raw bit rate is 588/192 * 2822400 = 8.643600MHz. )
+//-If running at 8.6MHz it would be ~800 sys clocks
+//-CD Schematics show the ECPUCLK signal from the Jag console of 26.5909/2=13.6MHz
+//- and two crystals: 33.8688MHz going to the decoder and 12MHz going to the CD Micro. How these are being conditioned is not clear
+//-If running at 12MHz it would be ~575 sys clocks [26.5MHz*4] (communication operating at CD Micro clock rate with only 65 states per transaction with no processing time)
+//-currently only getfulltoc 0x1400 using					updrespa <= 9'h511;
+
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
 //setup:
 //	move.l	#0,BUTCH	; enable BUTCH
@@ -330,7 +354,7 @@ reg [2:0] ds_resp_idx;
 reg [2:0] ds_resp_size; // max = 6
 reg [6:0] ds_resp_loop; // max = numtracks=99
 reg updresp; // signals for TOC responses to move to next one
-reg updrespa;
+reg [8:0] updrespa;
 
 //SBCNTRL   equ  BUTCH+$14	; CD subcode control register, R/W
 //SUBDATA   equ  BUTCH+$18	; Subcode data register A
@@ -427,14 +451,8 @@ begin
  end
 end
 */
-//wire [7:0] subcodep0 = {cdg_in[63],cdg_in[55],cdg_in[47],cdg_in[39],cdg_in[31],cdg_in[23],cdg_in[15],cdg_in[7]};
-//wire [7:0] subcodeq0 = {cdg_in[62],cdg_in[54],cdg_in[46],cdg_in[38],cdg_in[30],cdg_in[22],cdg_in[14],cdg_in[6]};
-//wire [7:0] subcoder0 = {cdg_in[61],cdg_in[53],cdg_in[45],cdg_in[37],cdg_in[29],cdg_in[21],cdg_in[13],cdg_in[5]};
-//wire [7:0] subcodes0 = {cdg_in[60],cdg_in[52],cdg_in[44],cdg_in[36],cdg_in[28],cdg_in[20],cdg_in[12],cdg_in[4]};
-//wire [7:0] subcodet0 = {cdg_in[59],cdg_in[51],cdg_in[43],cdg_in[35],cdg_in[27],cdg_in[19],cdg_in[11],cdg_in[3]};
-//wire [7:0] subcodeu0 = {cdg_in[58],cdg_in[50],cdg_in[42],cdg_in[34],cdg_in[26],cdg_in[18],cdg_in[10],cdg_in[2]};
-//wire [7:0] subcodev0 = {cdg_in[57],cdg_in[49],cdg_in[41],cdg_in[33],cdg_in[25],cdg_in[17],cdg_in[9],cdg_in[1]};
-//wire [7:0] subcodew0 = {cdg_in[56],cdg_in[48],cdg_in[40],cdg_in[32],cdg_in[24],cdg_in[16],cdg_in[8],cdg_in[0]};
+//wire [7:0] subcodep0 = {cdg_in[31],cdg_in[23],cdg_in[15],cdg_in[7],cdg_in[63],cdg_in[55],cdg_in[47],cdg_in[39]};
+//wire [7:0] subcodeq0 = {cdg_in[30],cdg_in[22],cdg_in[14],cdg_in[6],cdg_in[62],cdg_in[54],cdg_in[46],cdg_in[38]};
 wire [7:0] subcoder0 = {cdg_in[29],cdg_in[21],cdg_in[13],cdg_in[5],cdg_in[61],cdg_in[53],cdg_in[45],cdg_in[37]};
 wire [7:0] subcodes0 = {cdg_in[28],cdg_in[20],cdg_in[12],cdg_in[4],cdg_in[60],cdg_in[52],cdg_in[44],cdg_in[36]};
 wire [7:0] subcodet0 = {cdg_in[27],cdg_in[19],cdg_in[11],cdg_in[3],cdg_in[59],cdg_in[51],cdg_in[43],cdg_in[35]};
@@ -1101,7 +1119,7 @@ begin
 	cuelast[23:0] <= {carrys?cuel_dout[23:16]-8'h1:cuel_dout[23:16],carrys?8'h3B:carryf?cuel_dout[15:8]-8'h1:cuel_dout[15:8],carryf?8'h4A:cuel_dout[7:0]-8'h1};
 	recrc <= 1'b0;
 	updresp <= 1'b0;
-	updrespa <= 1'b0;
+	updrespa <= 9'h0;
 	aud_rd <= 1'b0;
 	old_doe_ds <= doe_ds;
 	old_doe_dsc <= doe_dsc;
@@ -2391,7 +2409,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 					ds_resp_loop <= (dsa_req_last_track > dsa_req_first_track) ? (dsa_req_last_track - dsa_req_first_track) : 7'h0;
 					dsa_long_toc_session <= dsa_req_session;
 					cues_addr <= dsa_req_first_track;
-					updrespa <= 1'b1;
+					updrespa <= 9'h511;
 				end
 			end
 			if (din[15:8]==8'h15) begin  // Set Mode
@@ -2744,7 +2762,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			add_ch3[15:0] <= din[15:0];
 		end
 	end
-	if (old_doe_ds && !doe_ds) begin
+	if (old_doe_ds && !doe_ds && !updresp && (updrespa == 9'h00)) begin
 		ds_resp_idx <= ds_resp_idx + 3'h1;
 		if (ds_resp_size == 3'h0) begin
 			ds_resp_idx <= 3'h0;
@@ -2753,15 +2771,17 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (ds_resp_loop != 7'h0) begin
 				ds_resp_loop <= ds_resp_loop - 7'h1;
 				cues_addr <= cues_addr + 7'h1;
-				updrespa <= 1'b1;
+				updrespa <= 9'h1;
 			end else begin
 				ds_resp_size <= 3'h0;
 //				butch_reg[0][13] <= 1'b0; // &= ~0x2000
 			end
 		end
 	end
-	if (updrespa) begin
-		updrespa <= 1'b0;
+	if (updrespa != 9'h00) begin
+		updrespa <= updrespa - 9'h1;
+	end
+	if (updrespa == 9'h01) begin
 		updresp <= 1'b1;
 	end
 	if (updresp) begin
@@ -2871,7 +2891,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 	if ((ds_resp_size == 3'h0) &&
 		!ds_a &&
 		!updresp &&
-		!updrespa &&
+		(updrespa != 9'h00) &&
 		!play_title_pending_rsp) begin
 		if (leadout_title_pending) begin
 			leadout_title_pending <= 1'b0;
