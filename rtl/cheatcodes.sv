@@ -6,7 +6,7 @@
 //  128        127:96          95:64         63:32         31:0
 // Integer values are in BIG endian byte order, so it up to the loader
 // or generator of the code to re-arrange them correctly.
-`include "defines.vh"
+`define CHEATS_DISABLED
 
 module CODES(
 	input  clk,        // Best to not make it too high speed for timing reasons
@@ -28,7 +28,7 @@ parameter BIG_ENDIAN   = 0;
 localparam NO_ADDR_LSB = (DATA_WIDTH == 16) ? 1 : 0;
 localparam INDEX_SIZE  = (MAX_CODES > 1) ? $clog2(MAX_CODES) : 1;
 
-`ifdef FAST_COMPILE
+`ifdef CHEATS_DISABLED
 	assign data_out = data_in;
 	assign available = 1'b0;
 `else

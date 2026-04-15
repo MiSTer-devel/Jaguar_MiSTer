@@ -1,4 +1,4 @@
-`include "defines.vh"
+//`include "defines.vh"
 module numstick
 #(
 	parameter int HOLD_CYCLES        = 53000000,
@@ -54,7 +54,7 @@ module numstick
 	localparam int GLYPH_X_OFF  = (CELL_W - GLYPH_W) >> 1;
 	localparam int GLYPH_Y_OFF  = (CELL_H - GLYPH_H) >> 1;
 
-`ifndef FAST_COMPILE
+`ifndef FAST_COMPILE2
 
 	logic [9:0] pix_x;
 	logic [9:0] pix_y;

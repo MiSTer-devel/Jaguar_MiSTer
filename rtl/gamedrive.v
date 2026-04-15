@@ -25,9 +25,9 @@ module gamedrive (
 	wire addr_data = cs & (addr[11:0] == 12'h004);
 	wire addr_data8 = cs & (addr[11:0] == 12'h005);
 
-	wire in_range = addr_cmd | addr_data | addr_data8;
+	// wire in_range = addr_cmd | addr_data | addr_data8;
 
-	assign oe = 1'b0;//in_range & enable & rd;
+	assign oe = cs & enable & rd;
 
 	// Status bits consumed by RAPTOR_GD_Init:
 	// CMD[15] busy: keep low for no-wait behavior

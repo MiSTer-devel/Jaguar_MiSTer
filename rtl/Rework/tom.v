@@ -61,7 +61,6 @@ module _tom
 	output xdtackl,
 	output xintl,
 	// below signals NOT_NETLIST
-	input fixed_blank,
 	input active_video,
 	output hs_o,
 	output hhs_o,
@@ -76,6 +75,7 @@ module _tom
 	output hblank,
 	output hsync,
 	output vsync,
+	output interlaced,
 	output [2:0] pix_ce_div,
 	input tlw,
 	input ram_rdy,
@@ -91,8 +91,6 @@ module _tom
 	output [10:3] atp,
 	input turbo,
 	input vintbugfix,
-	input ntsc,
-	input crop_video,
 	output wire hsl,
 	output wire vsl
 );
@@ -854,7 +852,6 @@ _vid vid_inst
 	.vey /* IN */ (vey),
 	.vly /* IN */ (vly),
 	.lock /* IN */ (lock),
-	.ntsc /* IN */ (ntsc), // Not in netlist
 	.start /* OUT */ (start),
 	.dd /* OUT */ (dd),
 	.lbufa /* OUT */ (lbufa),
@@ -867,10 +864,9 @@ _vid vid_inst
 	.blank /* OUT */ (blank_obuf),
 	.hblank_out     (hblank),
 	.vblank_out     (vblank),
+	.interlaced     (interlaced),
 	.pix_ce_div     (pix_ce_div),
-	.fixed_blank    (fixed_blank),
 	.active_video   (active_video),
-	.crop_video     (crop_video),
 	.hsync_out      (hsync),
 	.vsync_out      (vsync),
 	.nextpixa /* OUT */ (nextpixa),

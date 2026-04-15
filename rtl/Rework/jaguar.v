@@ -30,6 +30,7 @@ module jaguar
 	input       [7:0]   os_rom_q,
 
 	output              cart_ce_n,
+	output      [1:0]   cart_oe,
 	input       [31:0]  cart_q,
 
 	output       [9:0]  cart_bram_addr,
@@ -41,10 +42,11 @@ module jaguar
 	input       [15:0]  cd_bram_q,
 	output              cd_bram_wr,
 
-	output              vga_vs_n,
-	output              vga_hs_n,
+	output              vga_vs,
+	output              vga_hs,
 	output              hblank,
 	output              vblank,
+	output              interlaced,
 	output      [7:0]   vga_r,
 	output      [7:0]   vga_g,
 	output      [7:0]   vga_b,
@@ -120,16 +122,12 @@ module jaguar
 	output [15:0]       m68k_bus_do,
 	input [15:0]        m68k_di,
 	input               gamedrive_enable,
-	input               tom_pp_pixel_ce,
 	input               active_video,
-	input               fixed_blank,
-	input               ntsc,
-	input               crop_video
+	input               ntsc
 );
 assign xvclk_o = xvclk;
 
-wire [1:0] cart_oe_n;
-wire [1:0] cart_oe;
+	wire [1:0] cart_oe_n;
 
 assign cart_oe[0] = (~cart_oe_n[0] & ~cart_ce_n);
 assign cart_oe[1] = (~cart_oe_n[1] & ~cart_ce_n);
@@ -201,8 +199,8 @@ always @(posedge sys_clk) begin
 	end
 end
 
-assign xvclk = ce_26_6_p0;// | ce_26_6_p1;
-assign tlw = ce_26_6_p3;                  // Transparent Latch Write. This really should just be negedge xvclk, but in our design we need it to be CE.
+assign xvclk = ce_26_6_p0;
+assign tlw = ce_26_6_p3; // Transparent Latch Write. This really should just be negedge xvclk, but in our design we need it to be CE.
 assign vid_ce = (xvclk & pix_pp);
 
 // TOM
@@ -729,8 +727,8 @@ ps2_mouse mouse
 reg [11:0] beam_x = 12'd0;
 reg [9:0] beam_y = 10'd0;
 
-wire hsync_int = ~vga_hs_n; // active-high HSYNC
-wire vsync_int = ~vga_vs_n; // active-high VSYNC
+wire hsync_int = ~vga_hs; // active-high HSYNC
+wire vsync_int = ~vga_vs; // active-high VSYNC
 reg  prev_hs = 1'b0, prev_vs = 1'b0;
 
 always @(posedge sys_clk) begin
@@ -1198,13 +1196,24 @@ assign joy_bus_oe = (~j_xjoy_in[0] | ~j_xjoy_in[1]);
 // EEPROM INTERFACE
 assign cart_ee_cs = j_xgpiol_in[1];
 assign cart_ee_sk = j_xgpiol_in[0];
-assign cart_ee_di = dbus[0];
-wire cart_ee_hintw = xwel[0];
+wire cart_ee_gpio0_wr = e_dbus_we & ~j_xgpiol_in[0];
+reg cart_ee_di_latched = 1'b0;
+assign cart_ee_di = cart_ee_di_latched;
 // The CD-side 93C46 DO pin is pulled down on the board when the device is deselected.
 assign b_ee_dout = cd_ee_do_oe ? cd_ee_do : 1'b0;
 assign cd_ee_cs = b_ee_cs;
 assign cd_ee_sk = b_ee_sk;
 assign cd_ee_di = b_ee_din;
+
+// DI is only valid on the external bus during a GPIO_0 write cycle.
+always @(posedge sys_clk) begin
+	if (!xresetl) begin
+		cart_ee_di_latched <= 1'b0;
+	end else if (cart_ee_gpio0_wr) begin
+		cart_ee_di_latched <= e_dbus[0];
+	end
+end
+
 assign cart_bram_addr = cart_ee_bram_addr;
 assign cart_bram_data = cart_ee_bram_data;
 assign cart_bram_wr = cart_ee_bram_wr;
@@ -1212,19 +1221,13 @@ assign cd_bram_addr = cd_ee_bram_addr;
 assign cd_bram_data = cd_ee_bram_data;
 assign cd_bram_wr = cd_ee_bram_wr;
 
-// FIXME: cart_ee_di should be e_dbus[0]. The schematic very clearly shows that the eternal bus is
-// connected to the cart slot and thus the EEPROM. However, when the eeprom's address is put onto
-// the address bus to trigger jerry's GPIO pins, it triggers tom to disconnect the external bus. I'm
-// uncertain how this worked on a real system, but I can only guess there was some kind of delay in
-// the eeprom's latching of DI.
-
-eeprom cart_eeprom_inst
+eeprom_93c46_x16 cart_eeprom_inst
 (
 	.sys_clk (sys_clk),
 	.resetl  (xresetl),
 	.autosize(auto_eeprom),
-	.hintw   (cart_ee_hintw),
-	.cs      (cart_ee_cs),
+	.hintw   (xwel[0]),
+	.cs      (cart_ee_cs || cd_en),
 	.sk      (cart_ee_sk),
 	.din     (cart_ee_di),
 	.dout    (cart_ee_do),
@@ -1240,9 +1243,9 @@ eeprom_93c46_x16 cd_eeprom_inst
 (
 	.sys_clk (sys_clk),
 	.resetl  (xresetl),
-	// .autosize(1'b0),
-	// .hintw   (1'b1),
-	.cs      (cd_ee_cs),
+	.autosize(1'b0),
+	.hintw   (1'b1),
+	.cs      (cd_ee_cs || ~cd_en),
 	.sk      (cd_ee_sk),
 	.din     (cd_ee_di),
 	.dout    (cd_ee_do),
@@ -1270,8 +1273,8 @@ wire tom_tlw;
 
 wire hblank_sig, vblank_sig;
 
-assign hblank = /*active_video ? (hblank_sig || ~hactive) :*/ hblank_sig;
-assign vblank = /*active_video ? (vblank_sig || ~vactive) :*/ vblank_sig;
+assign hblank = hblank_sig;
+assign vblank = vblank_sig;
 
 _tom tom_inst
 (
@@ -1343,12 +1346,11 @@ _tom tom_inst
 	.blank           (blank),
 	.hblank          (hblank_sig),
 	.vblank          (vblank_sig),
-	.hsync           (vga_hs_n),
-	.vsync           (vga_vs_n),
+	.hsync           (vga_hs),
+	.vsync           (vga_vs),
+	.interlaced      (interlaced),
 	.pix_ce_div      (pix_ce_div),
-	.fixed_blank     (fixed_blank),
 	.active_video    (active_video),
-	.crop_video      (crop_video),
 	.tlw             (tlw),
 	.ram_rdy         (ram_rdy),
 	.aen             (aen),
@@ -1362,12 +1364,8 @@ _tom tom_inst
 	.startwe         (startwe),
 	.atp             (dram_addrp[10:3]),
 	.vintbugfix      (vintbugfix),
-	.turbo           (turbo),
-	.ntsc            (ntsc)
+	.turbo           (turbo)
 );
-
-// assign vga_hs_n = ~xhs_out;
-// assign vga_vs_n = ~xvs_out;
 
 wire audio_clk;
 wire jerry_tlw;
@@ -1473,7 +1471,7 @@ _butch butch_inst
 	.eoe1l           (b_eoe1l),
 	.ewe0l           (b_ewe0l),
 	.ewe2l           (b_ewe2l),
-	.ain             (abus_out[23:0]), // abus_out?
+	.ain             (abus_out[23:0]),
 	.din             (xd_in[31:0]), // e_dbus[31:0]?
 	.dout            (b_dout[31:0]),
 	.doe             (b_doe),
@@ -1495,21 +1493,22 @@ _butch butch_inst
 	.toc_data        (toc_data),
 	.toc_wr          (toc_wr),
 	.toc_done        (toc_done),
+	.lid_closed      (1'b1),
 	.eeprom_cs       (b_ee_cs),
 	.eeprom_sk       (b_ee_sk),
 	.eeprom_dout     (b_ee_din),
 	.eeprom_din      (b_ee_dout),
 	.maxc            (maxc),
 	.addr_ch3        (addr_ch3[23:0]),
-	.dohacks (dohacks),
-	.hackbus (hackbus),
-	.hackbus1 (hackbus1),
-	.hackbus2 (hackbus2),
-	.overflowo (overflow),
-	.underflowo (underflow),
-	.errflowo (errflow),
-	.unhandledo (unhandled),
-	.cd_valid(cd_valid),
+	.dohacks         (dohacks),
+	.hackbus         (hackbus),
+	.hackbus1        (hackbus1),
+	.hackbus2        (hackbus2),
+	.overflowo       (overflow),
+	.underflowo      (underflow),
+	.errflowo        (errflow),
+	.unhandledo      (unhandled),
+	.cd_valid        (cd_valid),
 	.sys_clk         (sys_clk)
 );
 wire b_xsck_oe;
@@ -1639,12 +1638,20 @@ assign vga_g = draw_crosshair ? 8'h00 : xg;
 assign vga_b = draw_crosshair ? 8'h00 : xb;
 //assign vga_b = {xb[7:1], 1'b0}; // FIXME: Real Jaguar has the LSB of blue disconnected for no obvious reason.
 
-// AUDIO / I2S receiver
+// AUDIO / Philips TDA1545A model
 wire   i2s_ws   = j_xws_in;
 wire   i2s_data = j_xi2stxd;
 wire   i2s_clk  = j_xsck_in;
 wire   qws;
 wire   mute;
+wire [17:0] dac_iol;
+wire [17:0] dac_ior;
+wire        dac_sample_strobe;
+
+// TDA1545A uses a EIAJ-like formatting and not standard I2S. Top men at atari appeared to work
+// around this by adding a couple of flip flips onto jerry's output. That's why it's like that. The
+// WS is inverted and frame timing is different. Any I2S fed to this has to keep this in mind. If it
+// goes through jerry it should be fine.
 
 flipflop mute_ff
 (
@@ -1662,398 +1669,25 @@ flipflop i2s_ws_ff
 	.clk     (i2s_clk),
 	.set     (1'b1),
 	.data    (i2s_ws),
-	.clear   (mute & xresetl),
+	.clear   (mute),
 	.q       (qws)
 );
 
-// Technically this should probably be run through a LPF but that can be
-// done in at the top level by just setting a filter in the framework.
-i2s_receiver i2s_receiver_inst
+tda1545a tda1545a_inst
 (
-	.sys_clk  (sys_clk),
-	.reset_n  (xresetl),
-	.i2s_ws   (qws),
-	.i2s_data (i2s_data),
-	.i2s_clk  (i2s_clk),
-	.left     (aud_16_l),
-	.right    (aud_16_r)
+	.sys_clk       (sys_clk),
+	.reset_n       (xresetl),
+	.BCK           (i2s_clk),
+	.WS            (qws),
+	.DATA          (i2s_data),
+	.GND           (1'b0),
+	.IREF          (16'h8000),
+	.IOL           (dac_iol),
+	.IOR           (dac_ior),
+	.pcm_l         (aud_16_l),
+	.pcm_r         (aud_16_r),
+	.sample_strobe (dac_sample_strobe)
 );
-
-endmodule
-
-module eeprom_93c46_x16
-(
-	input  sys_clk,
-	input  resetl,
-	input  cs,
-	input  sk,
-	input  din,
-	output dout,
-	output dout_oe,
-
-	output       [9:0]  bram_addr,
-	output      [15:0]  bram_data,
-	input       [15:0]  bram_q,
-	output              bram_wr
-);
-
-`define EE93_IDLE      3'b000
-`define EE93_DATA      3'b001
-`define EE93_READ      3'b010
-`define EE93_FETCH     3'b011
-`define EE93_WR_BEGIN  3'b100
-`define EE93_WR_WRITE  3'b101
-`define EE93_WR_LOOP   3'b110
-`define EE93_WR_END    3'b111
-
-reg         sk_prev = 1'b0;
-reg         write_enable = 1'b0;
-reg [2:0]   status = `EE93_IDLE;
-reg [3:0]   cnt = 4'd0;
-reg [8:0]   ir = 9'd0;
-reg [15:0]  dr = 16'd0;
-reg         r_dout = 1'b1;
-reg [5:0]   rdaddr = 6'd0;
-reg [9:0]   wraddr = 10'd0;
-reg [15:0]  wrdata = 16'hFFFF;
-reg         wrloop = 1'b0;
-reg         bram_wr_r = 1'b0;
-reg         do_status_active = 1'b0;
-
-wire [8:0]  ir_next = {ir[7:0], din};
-wire [5:0]  ir_addr = ir[5:0];
-wire [5:0]  ir_next_addr = ir_next[5:0];
-
-assign dout = r_dout;
-assign dout_oe = cs && resetl;// &&
-				// ((status == `EE93_FETCH) || (status == `EE93_READ) || status[2] || do_status_active);
-assign bram_addr = status[2] ? wraddr :
-				   (status == `EE93_FETCH || status == `EE93_READ) ? {4'h0, rdaddr} :
-				   {4'h0, ir[4:0], din};
-assign bram_data = wrdata;
-assign bram_wr = bram_wr_r;
-
-always @(posedge sys_clk) begin
-	sk_prev <= sk;
-	bram_wr_r <= 1'b0;
-
-	if (!resetl) begin
-		status <= `EE93_IDLE;
-		cnt <= 4'd0;
-		ir <= 9'd0;
-		dr <= 16'd0;
-		r_dout <= 1'b1;
-		rdaddr <= 6'd0;
-		wraddr <= 10'd0;
-		wrdata <= 16'hFFFF;
-		wrloop <= 1'b0;
-		write_enable <= 1'b0;
-		do_status_active <= 1'b0;
-	end else if (status == `EE93_FETCH) begin
-		dr <= bram_q;
-		r_dout <= 1'b0; // Dummy/turnaround bit before the first data bit.
-		status <= `EE93_READ;
-	end else if (status[2]) begin
-		// CD software strobes CS after a completed write command and expects the
-		// EEPROM to keep its internal write/busy state alive across that pulse.
-		case (status)
-			`EE93_WR_BEGIN: begin
-				do_status_active <= 1'b1;
-				r_dout <= 1'b0; // Busy while the internal write is active.
-				status <= `EE93_WR_WRITE;
-				if (ir[8:6] == 3'b111) begin
-					// ERASE
-					wraddr <= {4'h0, ir_addr};
-					wrloop <= 1'b0;
-					wrdata <= 16'hFFFF;
-				end else if (ir[8:6] == 3'b101) begin
-					// WRITE
-					wraddr <= {4'h0, ir_addr};
-					wrloop <= 1'b0;
-					wrdata <= dr;
-				end else if (ir[8:4] == 5'b10010) begin
-					// ERAL
-					wraddr <= 10'd0;
-					wrloop <= 1'b1;
-					wrdata <= 16'hFFFF;
-				end else if (ir[8:4] == 5'b10001) begin
-					// WRAL
-					wraddr <= 10'd0;
-					wrloop <= 1'b1;
-					wrdata <= dr;
-				end
-			end
-
-			`EE93_WR_WRITE: begin
-				if (write_enable) begin
-					bram_wr_r <= 1'b1;
-				end
-				status <= `EE93_WR_LOOP;
-			end
-
-			`EE93_WR_LOOP: begin
-				if (!wrloop) begin
-					status <= `EE93_WR_END;
-				end else begin
-					wraddr <= wraddr + 10'd1;
-					if (wraddr[5:0] == 6'h3F) begin
-						status <= `EE93_WR_END;
-					end else begin
-						status <= `EE93_WR_WRITE;
-					end
-				end
-			end
-
-			`EE93_WR_END: begin
-				r_dout <= 1'b1;
-				status <= `EE93_IDLE;
-			end
-		endcase
-	end else if (!cs) begin
-		// CS low resets only the serial front-end. Internal write state is
-		// handled above so a post-write CS strobe does not cancel the write.
-		status <= `EE93_IDLE;
-		cnt <= 4'd0;
-		ir <= 9'd0;
-		dr <= 16'd0;
-		r_dout <= 1'b1;
-		rdaddr <= 6'd0;
-		wraddr <= 10'd0;
-		wrdata <= 16'hFFFF;
-		wrloop <= 1'b0;
-		do_status_active <= 1'b0;
-	end else if (~sk_prev & sk) begin
-		if (status == `EE93_IDLE) begin
-			ir <= ir_next;
-			if (cnt == 4'd8) begin
-				cnt <= 4'd0;
-				if (ir_next[8]) begin
-					if (ir_next[7:6] == 2'b10) begin
-						// READ
-						rdaddr <= ir_next_addr;
-						status <= `EE93_FETCH;
-					end else if (ir_next[7:6] == 2'b01) begin
-						// WRITE
-						status <= write_enable ? `EE93_DATA : `EE93_IDLE;
-					end else if (ir_next[7:6] == 2'b11) begin
-						// ERASE
-						status <= write_enable ? `EE93_WR_BEGIN : `EE93_IDLE;
-					end else if (ir_next[5:4] == 2'b11) begin
-						// EWEN
-						write_enable <= 1'b1;
-					end else if (ir_next[5:4] == 2'b00) begin
-						// EWDS
-						write_enable <= 1'b0;
-					end else if (ir_next[5:4] == 2'b10) begin
-						// ERAL
-						status <= write_enable ? `EE93_WR_BEGIN : `EE93_IDLE;
-					end else if (ir_next[5:4] == 2'b01) begin
-						// WRAL
-						status <= write_enable ? `EE93_DATA : `EE93_IDLE;
-					end
-				end
-			end else begin
-				cnt <= cnt + 4'd1;
-			end
-		end else if (status == `EE93_DATA) begin
-			dr <= {dr[14:0], din};
-			cnt <= cnt + 4'd1;
-			if (cnt == 4'd15) begin
-				status <= `EE93_WR_BEGIN;
-				cnt <= 4'd0;
-			end
-		end else if (status == `EE93_READ) begin
-			r_dout <= dr[15];
-			dr <= {dr[14:0], 1'b0};
-		end
-	end
-end
-
-endmodule
-
-module eeprom
-(
-	input  sys_clk,
-	input  resetl,
-	input  autosize,
-	input  hintw,
-	input  cs,
-	input  sk,
-	input  din,
-	output dout,
-	output dout_oe,
-
-	output       [9:0]  bram_addr,
-	output      [15:0]  bram_data,
-	input       [15:0]  bram_q,
-	output              bram_wr
-);
-
-`define EE_IDLE      3'b000
-`define EE_DATA      3'b001
-`define EE_READ      3'b010
-
-`define EE_WR_BEGIN  3'b100
-`define EE_WR_WRITE  3'b101
-`define EE_WR_LOOP   3'b110
-`define EE_WR_END    3'b111
-
-reg          sk_prev = 1'b0;
-reg          ee_type = 1'b0;   // 0 = 128 bytes/9bit ir -- 1 = 2048 bytes/13bit ir
-reg          detect = 1'b0;
-// autosize detect assumes first command after reset is pulsed cs signal then 9 or 13 bit command followed by cs or reads
-// After cs then 9 bits, if next is not cs or write then is ee_type 0. Otherwise type 1.
-//reg [15:0]   mem[0:(1<<6)-1];
-reg          ewen = 1'b0;
-reg [2:0]    status = `EE_IDLE;
-reg [3:0]    cnt = 4'd0;           // Bit counter
-reg [12:0]   ir = 13'd0;           // Instruction Register
-reg [15:0]   dr = 16'd0;           // Data Register
-reg          r_dout = 1'b1;        // Data Out
-assign       dout = r_dout;
-assign       dout_oe = cs && resetl;
-
-reg [9:0]    wraddr = 10'b0000000000;
-reg [15:0]   wrdata = 16'hFFFF;
-reg          wrloop = 1'b0;
-
-wire [5:0]   irhi = ee_type ? ir[12:7] : ir[8:3];
-
-assign       bram_addr = {status[2] ? wraddr : ee_type ? { ir[8:0], din } : { 4'h0,ir[4:0], din }};
-assign       bram_data = wrdata;
-assign       bram_wr = bram_wr_;
-reg          bram_wr_;
-
-always @(posedge sys_clk) begin
-	sk_prev <= sk;
-	bram_wr_ <= 1'b0;
-	if (~cs || ~resetl) begin
-		// Reset
-		status <= `EE_IDLE;
-		cnt <= 4'd0;
-		ir <= 13'd0;
-		dr <= 16'd0;
-		r_dout <= 1'b1;
-		wraddr <= 10'b0000000000;
-		wrdata <= 16'hFFFF;
-		wrloop <= 1'b0;
-		if (detect) begin
-			if (ir[9]) begin
-				ee_type <= 1'b0;
-				detect <= 1'b0;
-			end
-			if (ir[12]) begin
-				ee_type <= 1'b1;
-				detect <= 1'b0;
-			end
-		end
-		if (~resetl) begin
-			ewen <= 1'b0;
-			ee_type <= 1'b0;
-			detect <= autosize;
-		end
-
-
-	end else if (~sk_prev & sk) begin
-		if (ir[9]) begin
-			detect <= 1'b0;
-		end
-		if (status == `EE_IDLE) begin
-			ir <= { ir[11:0], din };
-			if (irhi[4]) begin // Instruction complete
-				if (irhi[3:2] == 2'b10) begin
-					// READ
-					dr[15:0] <= bram_q[15:0];
-					r_dout <= 1'b0; // Dummy bit
-					status <= `EE_READ;
-				end else if (irhi[3:0] == 4'b0011) begin
-					// EWEN
-					ewen <= 1'b1;
-					status <= `EE_IDLE;
-				end else if (irhi[3:2] == 2'b11) begin
-					// ERASE
-					status <= `EE_WR_BEGIN;
-				end else if (irhi[3:2] == 2'b01) begin
-					// WRITE
-					status <= `EE_DATA;
-				end else if (irhi[3:0] == 4'b0010) begin
-					// ERAL
-					status <= `EE_WR_BEGIN;
-				end else if (irhi[3:0] == 4'b0001) begin
-					// WRAL
-					status <= `EE_DATA;
-				end else if (irhi[3:0] == 4'b0000) begin
-					// EWEN
-					ewen <= 1'b0;
-					status <= `EE_IDLE;
-				end
-			end
-		end else if (status == `EE_DATA) begin
-			detect <= 1'b0;
-			dr <= { dr[14:0], din };
-			cnt <= cnt + 4'd1;
-			if (cnt == 4'b1111) begin
-				status <= `EE_WR_BEGIN;
-			end
-		end else if (status == `EE_READ) begin
-			detect <= 1'b0;
-			r_dout <= dr[15];
-			dr <= { dr[14:0], 1'b0 };
-		end
-	end else if (~sk && ~hintw && detect && ir[8]) begin
-		ee_type <= 1'b1; //not read means 13 bit command
-		detect <= 1'b0;
-		status <= `EE_IDLE; // continue in progress command READ or EWEN
-	end else if (status[2]) begin // Internal processing (writes)
-		detect <= 1'b0;
-		if (status == `EE_WR_BEGIN) begin
-			r_dout <= 1'b0; // Busy
-			status <= `EE_WR_WRITE;
-			if (irhi[4:3] == 2'b11) begin
-				// ERASE
-				wraddr <= ee_type ? ir[9:0] : {4'h0,ir[5:0]};
-				wrloop <= 1'b0;
-				wrdata <= 16'hFFFF;
-			end else if (irhi[4:3] == 2'b01) begin
-				// WRITE
-				wraddr <= ee_type ? ir[9:0] : {4'h0,ir[5:0]};
-				wrloop <= 1'b0;
-				wrdata <= dr;
-			end else if (irhi[4:1] == 4'b0010) begin
-				// ERAL
-				wraddr <= 10'b0000000000;
-				wrloop <= 1'b1;
-				wrdata <= 16'hFFFF;
-			end else if (irhi[4:1] == 4'b0001) begin
-				// WRAL
-				wraddr <= 10'b0000000000;
-				wrloop <= 1'b1;
-				wrdata <= dr;
-			end
-		end else if (status == `EE_WR_WRITE) begin
-			if (ewen) begin
-				bram_wr_ <= 1'b1;
-			end
-			status <= `EE_WR_LOOP;
-		end else if (status == `EE_WR_LOOP) begin
-			if (~wrloop) begin
-				status <= `EE_WR_END;
-			end else begin
-				wraddr <= wraddr + 10'd1;
-				if ((wraddr == 10'b1111111111) && (ee_type)) begin
-					status <= `EE_WR_END;
-				end else if ((wraddr[5:0] == 6'b111111) && (!ee_type)) begin
-					status <= `EE_WR_END;
-				end else begin
-					status <= `EE_WR_WRITE;
-				end
-			end
-		end else if (status == `EE_WR_END) begin
-			r_dout <= 1'b1; // Ready
-			status <= `EE_IDLE;
-		end
-	end
-end
 
 endmodule
 
@@ -2086,66 +1720,5 @@ end
 
 assign q = set ? (clear ? (clk_rising_edge ? data : data_latch) : 1'b0) : 1'b1;
 assign q_n = (~set & ~clear) ? 1'b1 : ~q;
-
-endmodule
-
-module i2s_receiver
-(
-	input sys_clk,
-	input reset_n,
-	input i2s_clk,
-	input i2s_ws,
-	input i2s_data,
-	output [15:0] left,
-	output [15:0] right
-);
-
-reg [15:0] output_buffer_l;
-reg [15:0] output_buffer_r;
-
-assign left = output_buffer_l;
-assign right = output_buffer_r;
-
-always @(posedge sys_clk) begin : i2s_proc
-	reg [15:0] i2s_buf[2];
-	reg  [4:0] i2s_cnt;
-	reg        old_clk, old_ws, side, i2s_next;
-
-	// Latch data on falling edge
-	old_clk <= i2s_clk;
-	if (~i2s_clk && old_clk) begin
-		if (~i2s_cnt[4]) begin // Ignore any bits that overflow
-			i2s_cnt <= i2s_cnt + 1'd1;
-			i2s_buf[side][4'd15 - i2s_cnt[3:0]] <= i2s_data;
-		end
-		old_ws <= i2s_ws;
-		if (old_ws != i2s_ws)
-			i2s_next <= 1;
-	end
-
-	// Check WS on rising edge
-	if (i2s_clk && ~old_clk) begin
-		if (i2s_next) begin
-			i2s_cnt <= 0;
-			side <= i2s_ws;
-			i2s_next <= 0;
-
-			if (~i2s_ws) begin
-				i2s_buf[0] <= 16'd0;
-				i2s_buf[1] <= 16'd0;
-				output_buffer_l <= i2s_buf[0];
-				output_buffer_r <= i2s_buf[1];
-			end
-		end
-	end
-
-	if (~reset_n) begin
-		old_clk <= i2s_clk;
-		old_ws <= i2s_ws;
-		side <= i2s_ws;
-		output_buffer_l <= 0;
-		output_buffer_r <= 0;
-	end
-end
 
 endmodule

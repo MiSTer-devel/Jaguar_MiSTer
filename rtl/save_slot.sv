@@ -43,7 +43,7 @@ module jaguar_save_slot #(
 			if (block_count == 64'd0) begin
 				blocks_from_size = 1;
 			end else if (block_count > MAX_BLOCKS) begin
-				blocks_from_size = MAX_BLOCKS;
+				blocks_from_size = MAX_BLOCKS[BLOCK_BITS-1:0];
 			end else begin
 				blocks_from_size = block_count[BLOCK_BITS-1:0];
 			end

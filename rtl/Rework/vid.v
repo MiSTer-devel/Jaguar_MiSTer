@@ -42,10 +42,7 @@ module _vid
 	input vey,
 	input vly,
 	input lock,
-	input ntsc, // Not in netlist
-	input fixed_blank, // Not part of netlist
 	input active_video, // Not part of netlist
-	input crop_video, // Not part of netlist
 	output start,
 	output dd,
 	output lbufa,
@@ -58,10 +55,10 @@ module _vid
 	output blank,
 	output vblank_out,
 	output hblank_out,
+	output interlaced,
 	output [2:0] pix_ce_div,// Not part of netlist
 	output hsync_out,
 	output vsync_out,
-	output vvs_o,
 	output nextpixa,
 	output nextpixd,
 	output cry16,
@@ -641,56 +638,26 @@ end
 // internal behavior.
 // In NTSC, 1588 x 476 seems to be the canonical drawn screen size, PAL is 1588 x 568.
 // What we want is about a 640x224 output which is 1280x448 output in atari terms.
-// 704x238
-// 5, 10, -1, 7
 
-// It seems the active display drawing makes the vblank shifted up by 2 jaguar lines and the hblank shifted right by 4 jaguar clocks
-
+// So, HC (horizontal counter) is a lie. It does not increment from 0 to the length of the line.
+// In fact, it increments to HP then resets and increments it's 10th bit, then increments to HP again,
+// so using real numbers for horizontal counts doesn't work. They have to be adjusted to use the real
+// hperiod.
 
 wire [10:0] hdb_real = (hdb1_ < hdb2_) ? hdb1_ : hdb2_;
 
-wire [10:0] hb_real = (hdb_real > hbe_) ? hdb_real : hbe_;
-wire [10:0] he_real = (hde_ < hbb_) ? hde_ : hbb_;
-wire [10:0] vb_real = (vdb > vbe) ? vdb : vbe;
-wire [10:0] ve_real = (vde < vbb) ? vde : vbb;
+// The goal here is to effectively make sure games which aren't really using the active video area
+// registers properly get that corrected for them. I'm looking at you Primal Rage.
+wire [10:0] hb_real = ((hdb_real > (hbe_ + 3'd4)) ? (hdb_real - 4'd4) : (hbe_ + 11'd84));
+wire [10:0] he_real = ((hde_ < (hbb_ + 3'd4)) ? hde_ : (hbb_ - 11'd44));
+wire [10:0] vb_real = ((vdb > (vbe + 2'd2)) ? vdb : (vbe + 11'd24)); // 26
+wire [10:0] ve_real = ((vde < (vbb + 2'd2)) ? vde : (vbb - 4'd4)); // 2
 
-wire [10:0] cropped_hlen = (ntsc ? 11'd1280 : 11'd1398) + 11'd192; // I don't know why it needs the 180. I really don't.
-wire [10:0] cropped_vlen = ntsc ? 11'd448 : 11'd574;
-wire [10:0] full_hlen = ntsc ? 11'd1588 : 11'd1553;
-wire [10:0] full_vlen = ntsc ? 11'd482 : 11'd576;
 
-// The active drawn area between the blanks.
-wire [10:0] hblank_len = hbb_[10:0] - hbe_[10:0];
-wire [10:0] vblank_len = vbb[10:0] - vbe[10:0];
-
-wire [10:0] hactive_len = he_real - hb_real;
-wire [10:0] vactive_len = ve_real - vb_real;
-
-wire [10:0] hgap_lead = hb_real - hbe_;
-wire [10:0] hgap_tail = hbb_ - he_real;
-wire [10:0] vgap_lead = vb_real - vbe;
-wire [10:0] vgap_tail = vbb - ve_real;
-
-// Only crop if we need to crop.
-wire [10:0] ha_diff = (hactive_len > cropped_hlen) ? (hactive_len - cropped_hlen) : 11'd0;
-wire [10:0] va_diff = (vactive_len > cropped_vlen) ? (vactive_len - cropped_vlen) : 11'd0;
-
-// The space between hblank end and drawing begin, plus whatever crop we need to do to the drawing area.
-wire [10:0] h_offset = 11'd4;
-wire [10:0] v_offset = 11'd0; // Maybe 4 for some things?
-wire [10:0] h_mask_offset = 11'd28; // I have no earthly idea why this number is needed.
-
-wire [10:0] h_lead_diff = (hgap_lead + ha_diff[10:1]);
-wire [10:0] h_tail_diff = (hgap_tail + ha_diff[10:1]);
-wire [10:0] v_lead_diff = (vgap_lead + va_diff[10:1]);
-wire [10:0] v_tail_diff = (vgap_tail + va_diff[10:1]);
-
-wire crop_h = ((hbe_ + h_lead_diff + h_mask_offset) >= hc[10:0]) || (((hbb_ + h_mask_offset) - h_tail_diff) <= hc[10:0]);
-
-wire [10:0] vbb_fixed = active_video ? (ve_real + v_offset) : (fixed_blank ? (crop_video ? ((vbb[10:0] - v_tail_diff) + v_offset)          : (vbe_fixed + full_vlen))    : vbb[10:0]);
-wire [10:0] vbe_fixed = active_video ? (vb_real + v_offset) : (fixed_blank ? (crop_video ? ((vbe[10:0] + v_lead_diff) + v_offset)          : (vbe[10:0]))                : vbe[10:0]);
-wire [10:0] hbb_fixed = active_video ? (he_real + h_offset) : (fixed_blank ? (crop_video ? (hbb_ + h_offset)                             : (hbe_fixed + full_hlen))    : hbb_[10:0]);
-wire [10:0] hbe_fixed = active_video ? (hb_real + h_offset) : (fixed_blank ? (crop_video ? (hbe_ + h_offset)                             : (hbe_[10:0]))               : hbe_[10:0]);
+wire [10:0] vbb_fixed = active_video ? ve_real : vbb[10:0];
+wire [10:0] vbe_fixed = active_video ? vb_real : vbe[10:0];
+wire [10:0] hbb_fixed = active_video ? he_real : hbb_[10:0];
+wire [10:0] hbe_fixed = active_video ? hb_real : hbe_[10:0];
 
 assign vbbeq = vbb_fixed == vc[10:0];
 assign vbeeq = vbe_fixed == vc[10:0];
@@ -820,6 +787,11 @@ reg hblank_obuf, vblank_obuf, vblank_obuf1, vblank_obuf2, hsync_obuf, vsync_obuf
 
 always @(posedge sys_clk)
 begin
+	reg old_hblank;
+	reg old_hs;
+	old_hblank <= hblank;
+	old_hs <= hs;
+
 	if (~old_clk && clk) begin
 		vblank <= ((vbbeq & ~vblank) | (~vbeeq & vblank)) & vresl;
 		hblank <= ((hbbeq & ~hblank) | (~hbeeq & hblank)) & vresl;
@@ -838,12 +810,11 @@ begin
 		end else begin
 			hblank_obuf <= hblank;
 			hsync_obuf <= hs;
-			if (hs)
+			if (~old_hs)
 				vsync_obuf <= vvs;
-			if (hblank) begin
+			if (~old_hblank) begin
 				vblank_obuf1 <= vblank;
-				vblank_obuf2 <= vblank_obuf1;
-				vblank_obuf <= vblank_obuf2;
+				vblank_obuf <= vblank_obuf1;
 			end
 		end
 	end
@@ -855,6 +826,7 @@ assign hblank_out = hblank_obuf;
 assign vsync_out = vsync_obuf;
 assign hsync_out = hsync_obuf;
 assign pix_ce_div = ppn;
+assign interlaced = ~vp[0]; // The documentation says it's +1, and interlaced if odd number of lines, so even vp's are interlaced.
 /* end not part of netlist */
 
 assign notvblank = ~vblank;
@@ -866,7 +838,7 @@ assign notves = ~ves;
 assign nothes = ~hes;
 
 // VID.NET (290) - blank : nd2
-assign blank = ~(notvblank & nothblank) || (crop_video && crop_h); // The latter half of this is not in netlist.
+assign blank = ~(notvblank & nothblank);
 
 // VID.NET (305) - hvstart : an2
 assign hvstart = hvsb & vvs;
