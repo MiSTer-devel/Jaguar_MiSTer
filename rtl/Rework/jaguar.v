@@ -99,6 +99,7 @@ module jaguar
 	output              aud_ce,
 	input               aud_busy,
 	input               aud_sess,
+	input       [63:0]  cdg_in,
 	input               force_music_cd,
 	input               cd_en,
 	input               cd_ex,
@@ -111,6 +112,7 @@ module jaguar
 	output              errflow,
 	output              unhandled,
 	input               cd_valid,
+	input               cd_sector2448,
 	output              aud_16_eq,
 	input               turbo,
 	input               vintbugfix,
@@ -1480,6 +1482,7 @@ _butch butch_inst
 	.aud_cmp         (aud_in[63:0]),
 	.audwaitl        (audwaitl),
 	.aud_cbusy       (aud_busy),
+	.cdg_in          (cdg_in[63:0]),
 	.i2srxd          (j_xi2srxd),
 	.eint            (b_eint),
 	.sen             (b_xsck_oe),
@@ -1509,6 +1512,7 @@ _butch butch_inst
 	.errflowo        (errflow),
 	.unhandledo      (unhandled),
 	.cd_valid        (cd_valid),
+	.cd_sector2448   (cd_sector2448),
 	.sys_clk         (sys_clk)
 );
 wire b_xsck_oe;
@@ -1545,7 +1549,7 @@ flipflop xbgl_ff
 assign fx68k_clk = turbo ? (ce_26_6_p1 | ce_26_6_p2) : j_xcpuclk;
 assign m68k_clk = fx68k_clk;
 
-`define ACCURATE_CPU
+//`define ACCURATE_CPU
 `ifdef ACCURATE_CPU
 m68kcpu m68k_inst
 (

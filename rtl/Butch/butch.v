@@ -30,6 +30,7 @@ module _butch
 	output aud_ce,
 	input  audwaitl,
 	input  aud_cbusy,
+	input  [63:0] cdg_in,
 	input [9:0] toc_addr,
 	input [15:0] toc_data,
 	input toc_wr,
@@ -51,6 +52,7 @@ module _butch
 	output errflowo,
 	output unhandledo,
 	input cd_valid,
+	input cd_sector2448,
 	input sys_clk
 );
 
@@ -78,12 +80,56 @@ localparam [15:0] DATA_WAIT_TIMEOUT = 16'hFFFF;
 //I2SDAT2   equ  BUTCH+$28	; i2s FIFO data
 //EEPROM    equ  BUTCH+$2C	; interface to CD-eeprom
 reg [31:0] butch_reg [0:11];
-//BUTCH     equ  $DFFF00	; base of Butch=interrupt control register, R/W
+//;BUTCH     equ  $DFFF00		;base of Butch=interrupt control register, R/W
+//;
+//;  When written (Long):
+//;
+//;  bit0 - set to enable interrupts
+//;  bit1 - enable CD data FIFO half full interrupt
+//;  bit2 - enable CD subcode frame-time interrupt (@ 2x spped = 7ms.)
+//;  bit3 - enable pre-set subcode time-match found interrupt
+//;  bit4 - CD module command transmit buffer empty interrupt
+//;  bit5 - CD module command receive buffer full
+//;  bit6 - CIRC failure interrupt
+//;
+//;  bit7-31  reserved, set to 0 
+//;
+//;
+//;  When read (Long):
+//;
+//;  bit0-8 reserved
+//;
+//;  bit9  - CD data FIFO half-full flag pending
+//;  bit10 - Frame pending
+//;  bit11 - Subcode data pending
+//;  bit12 - Command to CD drive pending (trans buffer empty if 1)
+//;  bit13 - Response from CD drive pending (rec buffer full if 1)
+//;  bit14 - CD uncorrectable data error pending
+//
+// Does not match these - 
+//No.          		Description
+//"""          		""""""""""""""
+//bit 0      set to 1 to enable interrupt per conditions below
+//bit 1      set to 1 to interrupt on CD data FIFO half full
+//bit 2      set to 1 to interrupt on every CD subcode frame-time at 1X speed (14 ms.)
+//bit 3      set to 1 to interrupt on every CD subcode frame-time at 2X speed (7 ms.)
+//bit 4      set to 1 to interrupt on your pre-set subcode time-match found
+//bit 5      set to 1 to interrupt on CD Module command transmit buffer empty
+//bit 6      set to 1 to interrupt on CD Module command receive buffer full
+//bit 7      set to 1 to interrupt on current error level 
+//bits 8 through 15 are reserved.    Set them to 0.
+//Whenever these CD Module registers are read, they return the status of the interface.      The interrupt flag status bits are...
+//	bit 9	CD data FIFO half-full flag pending
+//	bit 11 	Subcode data pending
+//	bit 12	Command to CD drive pending
+//	bit 13	Response from CD drive pending
+//	bit 14	CD uncorrectable data error pending
+
 //assign eint = (!butch_reg[0][0]) || (!fifo_int && !frame_int &&!sub_int && !tbuf_int && !rbuf_int);
 assign eint = (butch_reg[0][0]) && (fifo_int || frame_int || sub_int || tbuf_int || rbuf_int);
 wire fifo_int = butch_reg[0][9] && butch_reg[0][1];
-wire frame_int = butch_reg[0][10] && butch_reg[0][2];
-wire sub_int = butch_reg[0][11] && butch_reg[0][3];
+wire frame_int = butch_reg[0][11] && butch_reg[0][2];
+wire sub_int = butch_reg[0][10] && butch_reg[0][3];
 wire tbuf_int = butch_reg[0][12] && butch_reg[0][4];
 wire rbuf_int = butch_reg[0][13] && butch_reg[0][5];
 wire cd_crcerror = butch_reg[0][6];
@@ -225,9 +271,58 @@ wire cdkartpullreset = butch_reg[0][20];
 // F0h Servo Version Number - servo - Servo version number
 
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
+//setup:
+//	move.l	#0,BUTCH	; enable BUTCH
+//	move.l	#$10000,DSCNTRL	; enable DSA
+//	move.l	#7,I2CNTRL	; Enable I2S
+//	move.l	#1,I2CNTRL	; Enable I2S
+//	move.w	#$7001,DS_DATA	; Set non oversampled audio
+//	rts
+
+//;	movei	#BUTCH,r20		; moved for pipeline
+//	load	(r20),r27		;check for DSARX int pending
+//	btst	#13,r27
+//	jr	z,fifo_read	; This should ALWAYS fall thru the first time
+//; Set the match bit, to allow data
+//	moveq	#3,r26		; enable FIFO only
+//	store	r26,(r20)
+//	addq	#$10,r20
+//	load	(r20),r27
+//	bset	#2,r27
+//	store	r27,(r20)		; Disable SUBCODE match
+
+//jeri:
+//	move.l	I2CNTRL,d1
+//	tst.w	d0
+//	bne.b	.send
+//	bclr	#1,d1
+//	bra.b	.save
+//.send:
+//	bset	#1,d1
+//.save:
+//	bset	#2,d1
+//	move.l	d1,I2CNTRL
+//	rts
+
+//read:
+//	btst.l	#31,d0
+//	bne.b	.play
+//	subq.l	#4,a0		; Make up for ISR pre-increment
+//	move.l	#%0,BUTCH	; NO INTERRUPTS!!!!!!!!!!!
+//	move.w	#$101,J_INT
+//	move.l	I2CNTRL,d1	;Read I2S Control Register
+//	bclr	#2,d1		; Stop data
+//	move.l	d1,I2CNTRL
+
+//uread:
+//	move.l	I2CNTRL,d0	;Read I2S Control Register
+//	bclr	#2,d0		; Stop data
+//	move.l	d0,I2CNTRL
+//	rts
+
 wire i2s_drive = butch_reg[4][0];
 wire i2s_jerry = butch_reg[4][1];
-wire i2s_fifo_enabled = butch_reg[4][2]; // guess. turned on in read handler (gas/das)
+wire i2s_fifo_enabled = butch_reg[4][2]; // guess. turned on in read handler (gas/das) where labeled as Disable SUBCODE Match // pulsed to low in CD_setup
 wire i2s_16bit = butch_reg[4][3]; // ? only affects i2s format?
 wire i2s_fifonempty = i2s_rfifopos != i2s_wfifopos;//butch_reg[4][4];
 reg [31:0] ds_resp [0:5];
@@ -241,6 +336,23 @@ reg updrespa;
 //SUBDATA   equ  BUTCH+$18	; Subcode data register A
 //SUBDATB   equ  BUTCH+$1C	; Subcode data register B
 //SB_TIME   equ  BUTCH+$20	; Subcode time and compare enable (D24)
+//  1 frame = 588 longs (samples) = 2352 bytes data
+// 2352 bytes data = 98 bytes subcode (96 data + 2 synchro)
+// cdg files only have the 96 data bytes (24 * 4)
+//	load	(subdata),R0		;get S R Q & chunk#
+//	load	(subdatb),R1		;get W V U T
+// bit order appears to be 01234567 for each byte (roxl is used to get each bit at a time)
+// To get cdg 09 requires T=0x8X and W=0x8X and RSUV all =0x0X (looking only at top bit)
+// SUBDATA is S R Q chunk# (S is MSB. chunk# is 0x10-0x1B)
+// SUBDATB is W V U T (W is MSB)
+// SBCNTRL read clears the interrupt
+// SBCNTRL write 0x200 enables counter
+// SBCNTRL write $1FF is the count to use
+//  Calls it a PRN. Maybe some kind of LFSR counter?
+//	move.l	#$1e8,SBCNTRL	; preload PRN  f2=1x, 1e8=2x
+//	move.l	#$3e8,SBCNTRL	; turn on the subcode counter  2f2= 1x, 3e8 2x
+//  bit2 - enable CD subcode frame-time interrupt (@ 2x spped = 7ms.)
+// 1e8 = 488 = 7ms? f2 = 242 = 3.5ms? 14ms?
 reg [6:0] rframes;  // 0-74 // (msf % 75)
 reg [5:0] rseconds; // 0-59 // (msf / 75) % 60
 reg [6:0] rminutes; // 0-99 // (msf / 75) / 60
@@ -248,22 +360,24 @@ reg [6:0] aframes;  // 0-74 // (msf % 75)
 reg [5:0] aseconds; // 0-59 // (msf / 75) % 60
 reg [6:0] aminutes; // 0-99 // (msf / 75) / 60
 reg [6:0] atrack;   // 1-99
-wire [7:0] subcode [0:11];
+wire [7:0] subcodeq [0:11];
 wire [6:0] atrack_safe = (atrack > 7'd99) ? 7'd99 : atrack;
-wire [7:0] subq_tno;
-wire [7:0] subq_index;
-assign subcode[0] = 8'h1; // 2 channel audio no preemphasis, address 1
-assign subcode[1] = subq_tno; // track number bcd, or AA in leadout
-assign subcode[2] = subq_index; // index: 00 pregap, 01 program
-assign subcode[3] = bcd[rminutes]; // rel min bcd
-assign subcode[4] = bcd[{1'b0,rseconds}]; // rel sec bcd
-assign subcode[5] = bcd[rframes]; // rel frames bcd
-assign subcode[6] = 8'h0; // zero
-assign subcode[7] = bcd[aminutes]; // abs min bcd
-assign subcode[8] = bcd[{1'b0,aseconds}]; // abs sec bcd
-assign subcode[9] = bcd[aframes]; // abs frames bcd
-assign subcode[10] = crc1; // crc1 Polynomial = P(X)=X16+X12+X5+1
-assign subcode[11] = crc0; // crc0
+reg [7:0] subq_tno;
+reg [7:0] subq_index;
+wire [7:0] cur_subq_tno;
+wire [7:0] cur_subq_index;
+assign subcodeq[0] = 8'h1; // 2 channel audio no preemphasis, address 1
+assign subcodeq[1] = subq_tno; // track number bcd, or AA in leadout
+assign subcodeq[2] = subq_index; // index: 00 pregap, 01 program
+assign subcodeq[3] = bcd[rminutes]; // rel min bcd
+assign subcodeq[4] = bcd[{1'b0,rseconds}]; // rel sec bcd
+assign subcodeq[5] = bcd[rframes]; // rel frames bcd
+assign subcodeq[6] = 8'h0; // zero
+assign subcodeq[7] = bcd[aminutes]; // abs min bcd
+assign subcodeq[8] = bcd[{1'b0,aseconds}]; // abs sec bcd
+assign subcodeq[9] = bcd[aframes]; // abs frames bcd
+assign subcodeq[10] = crc1; // crc1 Polynomial = P(X)=X16+X12+X5+1
+assign subcodeq[11] = crc0; // crc0
 reg [7:0] crc1;
 reg [7:0] crc0;
 reg [15:0] crc;
@@ -272,10 +386,69 @@ reg [3:0] subidx;
 reg [7:0] sub_chunk_count;
 reg subcode_irq_pending;
 reg frame_irq_pending;
-wire [7:0] sub_chunk_tag = ((sub_chunk_count < 8'h10) || (sub_chunk_count > 8'h1B)) ? 8'h10 : sub_chunk_count;
-wire [15:0] subresp = {subcode[subidx],sub_chunk_tag};
-wire subbit = subcode[crcidx[6:3]][~crcidx[2:0]];
-wire [15:0] crcs = nextcrcb ? crc ^ {subcode[crcidx[6:3]],8'h00} : crc;
+wire sub_invalid = (sub_chunk_count < 8'h10) || (sub_chunk_count > 8'h1B);
+wire cdg_invalid = (sub_invalid) || (gsubidx != 6'h30) || (!cd_sector2448);
+reg [5:0] gsubidx;
+wire [5:0] cdg [0:95];
+reg [7:0] subcoder [0:11];// = cdg[subidx][5];
+reg [7:0] subcodes [0:11];// = cdg[subidx][4];
+reg [7:0] subcodet [0:11];// = cdg[subidx][3];
+reg [7:0] subcodeu [0:11];// = cdg[subidx][2];
+reg [7:0] subcodev [0:11];// = cdg[subidx][1];
+reg [7:0] subcodew [0:11];// = cdg[subidx][0];
+/*integer kk;
+initial begin
+ for (kk = 0; kk < 12; kk = kk + 1)
+ begin
+   subcoder[kk] <= 8'b00000000;
+   subcodes[kk] <= 8'b00000000;
+   subcodet[kk] <= 8'b10000000;
+   subcodeu[kk] <= 8'b00000000;
+   subcodev[kk] <= 8'b01111111;
+   subcodew[kk] <= 8'b10000000;
+ end
+   subcodes[6] <= 8'b00100000;
+   subcodet[6] <= 8'b10100000;
+   subcodeu[6] <= 8'b00100000;
+end
+*/
+/*
+integer ii;
+always@(*)
+begin
+ for (ii = 0; ii < 8; ii = ii + 1)
+ begin
+	subcoder[subidx][ii] <= cdg[5][subidx * 12 + ii];
+	subcodes[subidx][ii] <= cdg[4][subidx * 12 + ii];
+	subcodet[subidx][ii] <= cdg[3][subidx * 12 + ii];
+	subcodeu[subidx][ii] <= cdg[2][subidx * 12 + ii];
+	subcodev[subidx][ii] <= cdg[1][subidx * 12 + ii];
+	subcodew[subidx][ii] <= cdg[0][subidx * 12 + ii];
+ end
+end
+*/
+//wire [7:0] subcodep0 = {cdg_in[63],cdg_in[55],cdg_in[47],cdg_in[39],cdg_in[31],cdg_in[23],cdg_in[15],cdg_in[7]};
+//wire [7:0] subcodeq0 = {cdg_in[62],cdg_in[54],cdg_in[46],cdg_in[38],cdg_in[30],cdg_in[22],cdg_in[14],cdg_in[6]};
+//wire [7:0] subcoder0 = {cdg_in[61],cdg_in[53],cdg_in[45],cdg_in[37],cdg_in[29],cdg_in[21],cdg_in[13],cdg_in[5]};
+//wire [7:0] subcodes0 = {cdg_in[60],cdg_in[52],cdg_in[44],cdg_in[36],cdg_in[28],cdg_in[20],cdg_in[12],cdg_in[4]};
+//wire [7:0] subcodet0 = {cdg_in[59],cdg_in[51],cdg_in[43],cdg_in[35],cdg_in[27],cdg_in[19],cdg_in[11],cdg_in[3]};
+//wire [7:0] subcodeu0 = {cdg_in[58],cdg_in[50],cdg_in[42],cdg_in[34],cdg_in[26],cdg_in[18],cdg_in[10],cdg_in[2]};
+//wire [7:0] subcodev0 = {cdg_in[57],cdg_in[49],cdg_in[41],cdg_in[33],cdg_in[25],cdg_in[17],cdg_in[9],cdg_in[1]};
+//wire [7:0] subcodew0 = {cdg_in[56],cdg_in[48],cdg_in[40],cdg_in[32],cdg_in[24],cdg_in[16],cdg_in[8],cdg_in[0]};
+wire [7:0] subcoder0 = {cdg_in[29],cdg_in[21],cdg_in[13],cdg_in[5],cdg_in[61],cdg_in[53],cdg_in[45],cdg_in[37]};
+wire [7:0] subcodes0 = {cdg_in[28],cdg_in[20],cdg_in[12],cdg_in[4],cdg_in[60],cdg_in[52],cdg_in[44],cdg_in[36]};
+wire [7:0] subcodet0 = {cdg_in[27],cdg_in[19],cdg_in[11],cdg_in[3],cdg_in[59],cdg_in[51],cdg_in[43],cdg_in[35]};
+wire [7:0] subcodeu0 = {cdg_in[26],cdg_in[18],cdg_in[10],cdg_in[2],cdg_in[58],cdg_in[50],cdg_in[42],cdg_in[34]};
+wire [7:0] subcodev0 = {cdg_in[25],cdg_in[17],cdg_in[9], cdg_in[1],cdg_in[57],cdg_in[49],cdg_in[41],cdg_in[33]};
+wire [7:0] subcodew0 = {cdg_in[24],cdg_in[16],cdg_in[8], cdg_in[0],cdg_in[56],cdg_in[48],cdg_in[40],cdg_in[32]};
+//wire [31:0] subrespa = {subcodes0,subcoder0,subcodeq[subidx],sub_chunk_tag}; //,subcodeq0,};
+//wire [31:0] subrespb = {subcodew0,subcodev0,subcodeu0,subcodet0};
+wire [31:0] subrespa;
+assign subrespa[15:0] = sub_invalid ? 16'h0000 : {subcodeq[subidx],sub_chunk_count};
+assign subrespa[31:16] = cdg_invalid ? 16'h0000 : {subcodes[subidx],subcoder[subidx]};
+wire [31:0] subrespb = cdg_invalid ? 32'h00000000 : {subcodew[subidx],subcodev[subidx],subcodeu[subidx],subcodet[subidx]};
+wire subbit = subcodeq[crcidx[6:3]][~crcidx[2:0]];
+wire [15:0] crcs = nextcrcb ? crc ^ {subcodeq[crcidx[6:3]],8'h00} : crc;
 wire [15:0] nextcrc = {crcs[14:0],1'b0};
 wire nextcrcb = crcidx[2:0] == 3'h0;
 reg [6:0] crcidx;
@@ -292,6 +465,8 @@ reg fifo_inc;
 wire [4:0] fifo_fill = (i2s_wfifopos - i2s_rfifopos);
 // Not sure how big fifo is. CDBIOS seems to say 8 is half but accidentally reads 9?
 // Works if 9th is fetched while reading processing 8 (2x speed only)
+// CDDoc seems to indicate fifo depth is small on alpine but maybe 16k or 32k on production?
+//   Note that 16 kbytes, more or less, of "old" invalid data will be read from the FIFO before good data begins to appear.
 wire fifo_half = (fifo_fill >= 5'h8);
 
 //EEPROM    equ  BUTCH+$2C	; interface to CD-eeprom
@@ -323,7 +498,7 @@ assign hackbus2 = 1'b0;//cd_en && aud_sess && (({ain[23:1],1'b0}==24'h050EC0)) &
 assign override = cdbios && cd_en;
 assign doe = cd_en && oet && (breg);// || (!cdbios && caddr)); // not sure how mirroring applies or if reading is sometimes disabled - probably disabled when cdbios is disabled to allow cart pass through for >=4MB
 assign dout[31:0] = (aeven) ? dout_t[31:0] : {dout_t[15:0],dout_t[15:0]};
-wire [31:0] dout_t = doe_ds ? ds_resp[ds_resp_idx] : doe_sub ? {subresp,subresp} : doe_fif ? cur_i2s_fifo : butch_reg[ain[5:2]];
+wire [31:0] dout_t = doe_ds ? ds_resp[ds_resp_idx] : doe_suba ? subrespa : doe_subb ? subrespb : doe_fif ? cur_i2s_fifo : butch_reg[ain[5:2]];
 wire aeven = (ain[1]==1'b0); //even is high [31:16]
 wire breg = ain[23:8]==24'hdfff;
 wire caddr = ain[23:22]==2'b10;
@@ -335,8 +510,10 @@ wire ictl_a = ain[5:2]==4'h4; // 0x10
 wire doe_ictl = doe && ictl_a;
 wire sbcntrl_a = ain[5:2]==4'h5; // 0x14
 wire doe_sbcntrl = doe && sbcntrl_a;
-wire sub_a = ain[5:2]==4'h6; // should be 0x1A not just 0x18?
-wire doe_sub = doe && sub_a;
+wire sub_a = ain[5:2]==4'h6;
+wire doe_suba = doe && sub_a;
+wire sub_b = ain[5:2]==4'h7;
+wire doe_subb = doe && sub_b;
 wire fif_a1 = ain[5:2]==4'h9; // 0x24
 wire fif_a2 = ain[5:2]==4'hA; // 0x28
 wire fif_a = fif_a1 || fif_a2; // 0x24 or 0x28
@@ -347,7 +524,8 @@ reg [23:0] max_ch3;
 
 reg old_doe_ds;
 reg old_doe_dsc;
-reg old_doe_sub;
+reg old_doe_suba;
+reg old_doe_subb;
 reg old_doe_sbcntrl;
 reg old_doe_fif;
 reg old_fif_a1;
@@ -361,8 +539,8 @@ wire [6:0] num_tracks = cue_tracks[6:0];
 // 90us @ x2 = 31.752 bytes
 // 90.703us @ x2 = 32 bytes
 // 9647.5 cycles @ 106.36MHz = 90.703us
-// 358200 bytes/sec at double rate
-// 265909/(358.2*8) = 9.279 cycles/bit
+// 352800 bytes/sec at double rate
+// 265909/(352.8*8) = 9.4214 cycles/bit
 // 746.9MB = 317560 frames = 70.57 minutes max
 // 24'h1AF05E = which pattern 0-9
 //wire [6:0] frames_end = cuest[num_tracks[2:0]+3'h1][6:0];    // 0-74 // (msf % 75)
@@ -458,7 +636,7 @@ reg [7:0] seek_count;
 wire aud_busy = (old_aud_rd3) || (old_aud_rd2) || (old_aud_rd) || (aud_rd) || (!audwaitl);
 reg [18:0] taud_add;
 reg [29:8] taud2_add;
-reg [23:4] taud3_add;
+reg [25:4] taud3_add;
 reg [5:0] subtseconds; // 0-59
 reg [5:0] subtrseconds; // 0-59
 reg [15:0] last_ds;
@@ -756,9 +934,9 @@ begin
 end
 endfunction
 
-assign subq_tno = subq_leadout ? 8'hAA : ((subq_program || subq_pregap) ? bcd[atrack_safe] : 8'h00);
-assign subq_index = subq_program ? 8'h01 : 8'h00;
-wire [7:0] atti_cur_index = subq_index;
+assign cur_subq_tno = subq_leadout ? 8'hAA : ((subq_program || subq_pregap) ? bcd[atrack_safe] : 8'h00);
+assign cur_subq_index = subq_program ? 8'h01 : 8'h00;
+wire [7:0] atti_cur_index = cur_subq_index;
 wire [7:0] atti_cur_title = subq_leadout ? 8'hAA : {1'b0,track_idx};
 wire atti_runtime_active = play && !stop && !spinpause && !pause && (seek == 8'h0) && (splay == 5'h0);
 wire atti_evt_drain_active = atti_runtime_active || atti_force_full_update;
@@ -888,6 +1066,8 @@ begin
 		crcidx <= 7'h00;
 		crc1  <= 8'h0;
 		crc0  <= 8'h0;
+		subq_tno <= cur_subq_tno;
+		subq_index <= cur_subq_index;
 		rframes <= cur_rframes;
 		rseconds <= cur_rseconds;
 		rminutes <= cur_rminutes;
@@ -912,6 +1092,8 @@ reg [23:0] cueptemp;
 reg [23:16] cuestoptemp;
 reg tocsess1;
 reg pastcdbios;
+reg found_wait;
+reg found_wait2;
 
 always @(posedge sys_clk)
 begin
@@ -923,7 +1105,8 @@ begin
 	aud_rd <= 1'b0;
 	old_doe_ds <= doe_ds;
 	old_doe_dsc <= doe_dsc;
-	old_doe_sub <= doe_sub;
+	old_doe_suba <= doe_suba;
+	old_doe_subb <= doe_subb;
 	old_doe_sbcntrl <= doe_sbcntrl;
 	old_doe_fif <= doe_fif;
 	old_fif_a1 <= fif_a1;
@@ -1208,7 +1391,7 @@ begin
 		cur_aseconds <= cues_dout[13:8];
 		cur_aminutes <= cues_dout[22:16];
 	end
-	if (play_title_pending_rsp && !updabs_req && !updabs && (ds_resp_size == 3'h0) && !ds_a) begin
+	if (play_title_pending_rsp && !updabs_req && !updabs && (ds_resp_size == 3'h0) && !ds_a && !found_wait && !found_wait2 && (sub_chunk_count != 8'h0F)) begin
 		butch_reg[0][12] <= 1'b1;
 		butch_reg[0][13] <= 1'b1;
 		if (attiabs || attirel) begin
@@ -1383,7 +1566,22 @@ begin
 		ds_resp_loop <= 7'h0;
 		goto_found_pending_rsp <= 1'b0;
 	end
+	if (gsubidx < 6'h30) begin
+		gsubidx <= gsubidx + 6'd1;
+		if (gsubidx[1:0]==2'b10) begin
+			subcoder[gsubidx[5:2]] <= subcoder0;
+			subcodes[gsubidx[5:2]] <= subcodes0;
+			subcodet[gsubidx[5:2]] <= subcodet0;
+			subcodeu[gsubidx[5:2]] <= subcodeu0;
+			subcodev[gsubidx[5:2]] <= subcodev0;
+			subcodew[gsubidx[5:2]] <= subcodew0;
+		end else if (gsubidx[1:0]==2'b11) begin
+			aud_add <= aud_add + 4'h8;
+			aud_rd <= 1'b1;
+		end
+	end
 	if (seek != 8'h0) begin
+		gsubidx <= 6'h31;
 		if (seek[7]) begin       // Loop looking for cues_addr starting at last one
 			seek[0] <= !seek[0];  // These two settings do alternate between updating cues_addr and using it
 			seek[1] <= seek[0];
@@ -1462,15 +1660,20 @@ begin
 			taud_add[18:0] <= {taud_add[18:0]} + {cur_frames};//[19] is always 0
 		end else if (seek[1]) begin
 			// *2352=<<11 + <<8 + <<5 + <<4
+			// *2448=<<11 + <<8 + <<7 + <<4
 			seek[1] <= 1'b0;
 			taud2_add[29:8] <= {taud_add[18:0],3'h0} + {taud_add[18:0]};
-			taud3_add[23:4] <= {taud_add[18:0],1'h0} + {taud_add[18:0]};
+			if (cd_sector2448) begin
+			taud3_add[25:4] <= {taud_add[18:0],3'h0} + {taud_add[18:0]};
+			end else begin
+			taud3_add[25:4] <= {taud_add[18:0],1'h0} + {taud_add[18:0]};
+			end
 			seek_delay <= seek_delay_set;
 		end else if (seek[0]) begin
 			if (seek_delay != 0) begin
 				seek_delay <= seek_delay - 16'h1;
 				if (seek_delay == seek_delay_set) begin
-					aud_add[29:0] <= {{taud2_add[29:8],4'h0} + {taud3_add[23:4]},4'h0};//[31:30] are always 0
+					aud_add[29:0] <= {{taud2_add[29:8],4'h0} + {taud3_add[25:4]},4'h0};//[31:30] are always 0
 					aud_rd <= 1'b1;
 				end else if ((seek_delay == 31'h1) && aud_cbusy && !pause_mode_indicator) begin
 					seek_delay <= 31'h1;
@@ -1705,6 +1908,9 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 								end
 							end else begin
 								aud_add <= aud_add + 4'h8;
+								if (cd_sector2448 && ({cur_samples[9:1],1'b0} == 10'd586)) begin
+									gsubidx <= 6'h0;
+								end
 //						if (aud_in != aud_cmp) begin
 						if (!cd_valid) begin
 							underflow <= 1'b1;
@@ -1717,6 +1923,16 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 						end
 						if (wsout) begin
 						cur_samples <= cur_samples + 10'h1;
+						if ((sub_chunk_count == 8'h1B) || (sub_chunk_count == 8'h0F)) begin
+							if ((cur_samples == 10'd587) || (cur_samples <= 10'd1)) begin
+								subcode_irq_pending <= 1'b1;
+								sub_chunk_count <= 8'h10;
+								subidx <= 4'h0;
+								upd_frames <= 1'b1;
+								found_wait <= (sub_chunk_count == 8'h0F);
+								found_wait2 <= found_wait;
+							end
+						end else
 						if ((cur_samples == 10'd48) || (cur_samples == 10'd97) ||
 						    (cur_samples == 10'd146) || (cur_samples == 10'd195) ||
 						    (cur_samples == 10'd244) || (cur_samples == 10'd293) ||
@@ -1724,17 +1940,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 						    (cur_samples == 10'd440) || (cur_samples == 10'd489) ||
 						    (cur_samples == 10'd538) || (cur_samples == 10'd587)) begin
 							subcode_irq_pending <= 1'b1;
-							if (sub_chunk_count == 8'h1B) begin
-								sub_chunk_count <= 8'h10;
-								subidx <= 4'h0;
-							end else begin
-								sub_chunk_count <= sub_chunk_count + 8'h1;
-								if (sub_chunk_count == 8'h0F) begin
-									subidx <= 4'h0;
-								end else begin
-									subidx <= subidx + 4'h1;
-								end
-							end
+							sub_chunk_count <= sub_chunk_count + 8'h1;
+							subidx <= subidx + 4'h1;
 						end
 						if (cur_samples == 10'd587) begin
 							upd_frames <= 1'b1;
@@ -1816,7 +2023,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				butch_reg[4'h0][31:16] <= din[31:16];
 			end
 			if (!ewe0l) begin
-				butch_reg[4'h0][15:8] <= butch_reg[4'h0][15:8] & ~{din[15:14],2'b00,din[11:8]};
+				butch_reg[4'h0][15:8] <= butch_reg[4'h0][15:8] & ~{din[15:14],4'b0000,din[9:8]}; // I think this wrong. All these should probably be cleared by reading corresponding registers
 				butch_reg[4'h0][7:0] <= din[7:0];
 				// interrupt control
 			end
@@ -2706,7 +2913,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			ds_resp_loop <= 7'h0;
 		end
 	end
-	if (old_doe_sub && !doe_sub) begin
+	if (old_doe_suba && !doe_suba) begin
 		// SUBDATA reads no longer advance the chunk stream. Transport cadence owns
 		// `subidx` and the emitted low-byte chunk tag.
 	end
@@ -2718,7 +2925,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 		subcode_irq_pending <= 1'b0;
 		frame_irq_pending <= 1'b0;
 	end
-	if (!old_doe_sub && !doe_sub) begin
+	if (!old_doe_suba && !doe_suba && !old_doe_subb && !doe_subb) begin
 		if ((4'h0 == subidx) && upd_frames) begin
 			upd_frames <= 1'b0;
 			recrc <= 1'b1;
@@ -3015,6 +3222,113 @@ end
 //;        move.l  #$14,d1         ; external clk, interrupt on every sample pair
 //;        move.l  d1,(a0)         ; write to Jerry
 //  	rts
+
+//
+//SBuf_Beg	equ	$F03600		;subcode buffer in GPU memory
+//SBuf_Mid	equ	$F03660		; midway pointer in subcode buffer
+//SBuf_End	equ	$F036C0		; end of subcode buffer
+//
+//;
+//;==============================================================================
+//; EXTERNAL INTERRUPT (#1, DSP) - HANDLES SUBCODE INTERRUPT
+//;==============================================================================
+//;
+//sub_isr:
+//	load	(gflagptr),gflag	; get GPU flags
+//	load	(butchptr),R0		; get the ICR flags
+//	btst	#10,R0			; check for subcode interrupt
+//	jr	EQ,notours		;br if error--not a subcode irq
+//	load	(subdata),R0		;get S R Q & chunk#
+//sub_dat:
+//	load	(subdatb),R1		;get W V U T
+//	move	R0,R2
+//	shlq	#24,R2
+//	shrq	#24,R2
+//	cmp	subcnt,R2		;are we at expected chunk count?
+//	jr	EQ,goodchk		;br if good chunk #
+//	move	begptr,R3		;assume bad sequence on 1st half
+//;
+//;  Bad sequence, we must redo the frame
+//;
+//	cmp	midptr,curptr		;are we in 1st or 2nd half?
+//	jr	CS,firsthaf
+//	addq	#1,miscount
+//;
+//	move	midptr,R3
+//firsthaf:
+//	movei	#resetcnt,R2		;jump to reset subcnt & exit
+//	jump	(R2)
+//	move	R3,curptr		;start fresh frame
+//;	
+//;  got a good subcode here
+//;
+//goodchk:
+//	store	R0,(curptr)		;save S R Q & chunk#
+//	addq	#1,subcnt		;advance next expected chunk counter
+//	addq	#4,curptr		;bump buffer ptr
+//	addq	#1,getcount		;increment good counter
+//	store	R1,(curptr)		;save W V U T
+//	addq	#4,curptr
+//	moveq	#1,R1		;set half/full indicator temp (in case we need)
+//;
+//	cmp	midptr,curptr	;reached end of 1st half?
+//	jr	NE,nothalf	;br if not
+//	cmp	endptr,curptr	;test end in case we br--else it won't hurt
+//;
+//;  Reached end of halfway point..
+//;
+//	load	(hafflgp),R0	;check half buffer semiphore
+//	cmp	R1,R0		;already set?
+//	jr	NE,resetcnt	;if not, we can set now and exit
+//	store	R1,(hafflgp)	;set hafflg=1
+//;
+//;  Error condition detected--better shutdown
+//;
+//errx:
+//;	movei	#shutdown,R2
+//	movei	#exitirq,R2
+//	jump	(R2)
+//	nop
+//;
+//nothalf:
+//	jr	NE,exitirq
+//	load	(fulflgp),R0	
+//;
+//	cmp	R1,R0
+//	jr	EQ,errx		;br to error condition if detected
+//	store	R1,(fulflgp)
+//;
+//	move	begptr,curptr
+//resetcnt:
+//	moveq	#$10,subcnt
+//;
+//exitirq:
+//	movei	#J_INT,R0	;Jerry's interrupt ACK register
+//	movei	#SBCNTRL,R2	;read this to clear the subcode interrupt flag
+//;
+//	bset	#10,gflag	; set DSP interrupt clear bit 
+//	store	gflag,(gflagptr)	; restore flags
+//	bclr	#3,gflag	; clear IMASK (for GPU)
+//;
+//	moveq	#1,R1
+//	bset	#8,R1
+//	storew	R1,(R0)		;acknowlege Jerry
+//;
+//	load	(gpustop),R0	;see if 68k wants to stop us
+//;
+//	load	(R2),R1		;clear the Butch interrupt
+//;
+//	or	R0,R0
+//	jr	NE,shutdown	;br if 68k put a non-zero value here
+//;
+//;  now exit the irq by the Book
+//;
+//	load	(stackptr),R0	; get last instruction address
+//	addq	#$2,R0		; point at next to be executed
+//	addq	#$4,stackptr	; update the stack pointer
+//	jump	(R0)		; and return
+//	store	gflag,(gflagptr)	; restore flags
+//;
 
 
 endmodule

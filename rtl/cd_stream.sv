@@ -20,6 +20,7 @@ module jaguar_cd_stream
 	cd_toc_wr,
 	cd_toc_done,
 	cd_valid,
+	cd_sector2448,
 	audbus_busy,
 	xwaitl,
 	aud_rd_trig,
@@ -49,6 +50,7 @@ output [15:0] cd_toc_data;
 output        cd_toc_wr;
 output        cd_toc_done;
 output        cd_valid;
+output        cd_sector2448;
 output        audbus_busy;
 output        xwaitl;
 output        aud_rd_trig;
@@ -127,13 +129,14 @@ localparam [4:0] CD_STATE_CDI_FILENAME      = 5'd7;
 localparam [4:0] CD_STATE_CDI_PREGAP_LEN    = 5'd8;
 localparam [4:0] CD_STATE_CDI_START_TOTLEN  = 5'd9;
 localparam [4:0] CD_STATE_CDI_PREP_START    = 5'd10;
-localparam [4:0] CD_STATE_CDI_WRITE_START   = 5'd11;
-localparam [4:0] CD_STATE_CDI_WRITE_OFFSET  = 5'd12;
-localparam [4:0] CD_STATE_CDI_WRITE_LENGTH  = 5'd13;
-localparam [4:0] CD_STATE_CDI_WRITE_PREGAP  = 5'd14;
-localparam [4:0] CD_STATE_CDI_WRITE_SESSION = 5'd15;
-localparam [4:0] CD_STATE_CDI_WRITE_END     = 5'd16;
-localparam [4:0] CD_STATE_CDI_TRACK_DONE    = 5'd17;
+localparam [4:0] CD_STATE_CDI_SECTOR_SIZE   = 5'd11;
+localparam [4:0] CD_STATE_CDI_WRITE_START   = 5'd12;
+localparam [4:0] CD_STATE_CDI_WRITE_OFFSET  = 5'd13;
+localparam [4:0] CD_STATE_CDI_WRITE_LENGTH  = 5'd14;
+localparam [4:0] CD_STATE_CDI_WRITE_PREGAP  = 5'd15;
+localparam [4:0] CD_STATE_CDI_WRITE_SESSION = 5'd16;
+localparam [4:0] CD_STATE_CDI_WRITE_END     = 5'd17;
+localparam [4:0] CD_STATE_CDI_TRACK_DONE    = 5'd18;
 
 localparam [4:0] CD_STATE_EMIT_START        = CD_STATE_CDI_WRITE_START;
 localparam [4:0] CD_STATE_EMIT_OFFSET       = CD_STATE_CDI_WRITE_OFFSET;
@@ -210,7 +213,7 @@ wire lcnt = max_load_cnt == load_cnt;
 reg [31:0] cload_cnt;
 reg [31:0] max_cload_cnt;
 wire clcnt = max_cload_cnt == cload_cnt;
-localparam [5:0] CD_STARTUP_PREFETCH_DEPTH = 6'd4;
+localparam [5:0] CD_STARTUP_PREFETCH_DEPTH = 6'd10;
 wire [5:0] cd_ring_target_depth = stream_idle ? CD_RING_DEPTH : 6'd1;
 reg [4:0] cd_state;
 reg [29:0] cd_size;
@@ -252,6 +255,7 @@ reg old_ack = 1'b0;
 reg old_reset = 1'b0;
 reg djv2;
 reg djv3;
+reg sector2448 = 1'b0;
 wire [9:0] cd_toc_addr = {cd_track[6:0], cd_toc_type[2:0]};
 wire [20:0] cd_file_lba = ringbus_out[29:9];
 wire cd_lba_in_ring = (cd_ring_count != 6'd0) && (cd_file_lba >= cd_ring_base_lba) && (cd_file_lba < cd_ring_end_lba);
@@ -264,6 +268,7 @@ wire cd_startup_prefetch_ready =
 	!cd_startup_prefetch_pending ||
 	(cd_lba_in_ring && ((cd_ring_count >= CD_STARTUP_PREFETCH_DEPTH) || (cd_ring_end_lba >= cd_img_total_lba)));
 wire cd_valid = jagcd_on_cart_bus && cd_lba_in_ring && cd_fresh && cd_startup_prefetch_ready;
+wire cd_sector2448 = sector2448;
 
 // This controller multiplexes two related state machines into one sequential
 // process:
@@ -388,7 +393,11 @@ always @(posedge clk_sys) begin
 					if (cd_cnt[1:0] == 2'b00) begin
 						cd_pregap_pos[29:4] <= {7'h0, cd_add1[18:0]};
 					end else if (cd_cnt[1:0] == 2'b01) begin
+						if (sector2448) begin
+						cd_pregap_pos[29:7] <= cd_pregap_pos[29:7] + {4'h0, cd_add1[18:0]};
+						end else begin
 						cd_pregap_pos[29:5] <= cd_pregap_pos[29:5] + {6'h0, cd_add1[18:0]};
+						end
 					end else if (cd_cnt[1:0] == 2'b10) begin
 						cd_pregap_pos[29:8] <= cd_pregap_pos[29:8] + {3'h0, cd_add1[18:0]};
 					end else begin
@@ -578,11 +587,25 @@ always @(posedge clk_sys) begin
 				cd_bus_add = 30'h1;
 				cd_ce <= 1;
 				if (cd_cnt == 3'h7) begin
-					cd_state <= CD_STATE_CDI_PREP_START;
+					cd_state <= CD_STATE_CDI_SECTOR_SIZE;
 					cd_cnt <= 3'h0;
-					cd_bus_add = djv2 ? 30'h32 : 30'h89;
+					cd_bus_add = 30'h11;
 				end
-				end else if (cd_state == CD_STATE_CDI_PREP_START) begin
+			end else if (cd_state == CD_STATE_CDI_SECTOR_SIZE) begin
+				if (cd_data == 8'h4) begin          // 2352+96 P-W    == 2448
+					sector2448 <= 1;
+//				end else if (cd_data == 8'h3) begin // 2352+16 Q only == 2368 
+//					sector2448 <= 1;
+				end else if (cd_data == 8'h2) begin // 2352
+					sector2448 <= 0;
+				end else begin
+					cd_state <= CD_STATE_IDLE;
+				end
+				cd_ce <= 1;
+				cd_state <= CD_STATE_CDI_PREP_START;
+				cd_cnt <= 3'h0;
+				cd_bus_add = djv2 ? 30'h21 : 30'h78;
+			end else if (cd_state == CD_STATE_CDI_PREP_START) begin
 					cd_state <= CD_STATE_EMIT_START;
 					cd_emit_calc_offset <= 1'b1;
 				cd_file_offset <= 30'h0;

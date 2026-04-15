@@ -558,6 +558,7 @@ wire        cd_toc_done;
 wire  [9:0] cd_toc_addr;
 wire [15:0] cd_toc_data;
 wire        cd_valid;
+wire        cd_sector2448;
 wire        audbus_busy;
 wire        aud_rd_trig;
 wire        lcnt;
@@ -769,7 +770,7 @@ wire [15:0] aud_16_r;
 
 wire ser_data_in;
 wire ser_data_out;
-assign ser_data_in = USER_IN[0];
+assign ser_data_in = USER_IN[2];
 assign USER_OUT[1] = ser_data_out;
 
 wire m68k_clk;
@@ -891,7 +892,8 @@ jaguar jaguar_inst
 	.aud_ce(aud_ce),
 	.aud_busy(audbus_busy),
 	// aud_sess: menu-driven audio-session override into Butch.
-	.aud_sess(status[55]),
+  .aud_sess(~status[55]),
+	.cdg_in( cdg_in ) ,
 	.force_music_cd(status[55]),
 	.dohacks(patch_checksums),
 	.xvclk_o(xvclk_o),
@@ -900,6 +902,7 @@ jaguar jaguar_inst
 	.errflow (errflow),
 	.unhandled (unhandled),
 	.cd_valid(cd_valid),
+	.cd_sector2448(cd_sector2448),
 	.ntsc( ntsc ) ,
 
 	.ps2_mouse( ps2_mouse ) ,
@@ -1173,6 +1176,7 @@ jaguar_cd_stream cd_stream_inst
 	.cd_toc_addr(cd_toc_addr),
 	.cd_toc_data(cd_toc_data),
 	.cd_valid(cd_valid),
+	.cd_sector2448(cd_sector2448),
 	.audbus_busy(audbus_busy),
 	.xwaitl(xwaitl),
 	.aud_rd_trig(aud_rd_trig),
@@ -1244,6 +1248,7 @@ wire ch1a_ready, ch1b_ready;
 // assign ch1_ready = ch1a_ready || ch1b_ready;
 
 wire [63:0] cart_q1;
+wire [63:0] cdg_in = cd_stream_q;
 wire cart_wrack;// = 1'b1;	// TESTING!!
 assign cart_wrack = sdram_ch2_ready;
 reg cart_diff;

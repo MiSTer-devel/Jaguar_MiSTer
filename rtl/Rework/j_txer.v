@@ -228,7 +228,7 @@ assign tc = co[1] & dc[2];
 
 // UART2.NET (512) - ndc[0] : mx4
 // UART2.NET (513) - ndc[1-2] : mx4
-assign ndc[2:0] = {co[1:0],ci_0} ? 3'h0 : (dc[2:0] ^ {3{~seldat}});
+assign ndc[2:0] = ~seldat ? 3'h0 : (dc[2:0] ^ {co[1:0],ci_0});
 
 // UART2.NET (520) - scs : fd1
 // UART2.NET (521) - dscs : fd1q
