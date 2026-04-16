@@ -357,7 +357,7 @@ reg [2:0] ds_resp_size; // max = 6
 reg [6:0] ds_resp_loop; // max = numtracks=99
 reg updresp; // signals for TOC responses to move to next one
 reg [8:0] updrespa;
-reg [10:0] updpaus;
+reg [12:0] updpaus;
 
 //SBCNTRL   equ  BUTCH+$14	; CD subcode control register, R/W
 //SUBDATA   equ  BUTCH+$18	; Subcode data register A
@@ -1123,7 +1123,7 @@ begin
 	recrc <= 1'b0;
 	updresp <= 1'b0;
 	updrespa <= 9'h0;
-	updpaus <= 11'h0;
+	updpaus <= 13'h0;
 	aud_rd <= 1'b0;
 	old_doe_ds <= doe_ds;
 	old_doe_dsc <= doe_dsc;
@@ -2254,7 +2254,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 //				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				updpaus <= 11'h7FF;
+				updpaus <= 13'h1FFF;
 				ds_resp[0] <= 32'h0141;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
@@ -2266,7 +2266,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
 //				butch_reg[0][13] <= 1'b1; // |= 0x2000
-				updpaus <= 11'h7FF;
+				updpaus <= 13'h1FFF;
 				ds_resp[0] <= 32'h0142;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
@@ -2421,7 +2421,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (din[15:8]==8'h15) begin  // Set Mode
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000
+//				butch_reg[0][13] <= 1'b1; // |= 0x2000
+				updpaus <= 13'h1FFF;
 				ds_resp[0] <= 32'h1700 | din[7:0];
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
@@ -2768,11 +2769,11 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			add_ch3[15:0] <= din[15:0];
 		end
 	end
-	if (updpaus != 11'h00) begin
-		updpaus <= updpaus - 11'h1;
+	if (updpaus != 13'h00) begin
+		updpaus <= updpaus - 13'h1;
 	end
-	if (updpaus == 11'h01) begin
-		if ((ds_resp[0] <= 32'h0141) || (ds_resp[0] <= 32'h0142))
+	if (updpaus == 13'h01) begin
+		if ((ds_resp[0] <= 32'h0141) || (ds_resp[0] <= 32'h0142) || (ds_resp[0][15:8] <= 8'h17))
 			butch_reg[0][13] <= 1'b1; // |= 0x2000
 	end
 	if (old_doe_ds && !doe_ds && !updresp && (updrespa == 9'h00)) begin
@@ -2905,7 +2906,7 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 		!ds_a &&
 		!updresp &&
 		(updrespa == 9'h00) &&
-		(updpaus == 11'h00) &&
+		(updpaus == 13'h00) &&
 		!play_title_pending_rsp) begin
 		if (leadout_title_pending) begin
 			leadout_title_pending <= 1'b0;
