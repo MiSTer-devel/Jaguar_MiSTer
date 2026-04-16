@@ -60,16 +60,13 @@ It does not speed up the main "Tom and Jerry" custom chips, though, except for r
 
 If a game doesn't work try turning on max compatibility, homebrew support or loading more than once.
 
-Jaglink over SNAC works. Rx is on User In 0 and Tx is on User Out 1.
+Jaglink over SNAC works. Rx is on User In 2 and Tx is on User Out 1.
 
 In summary: still a fair bit of work to be done. lol
 
 ElectronAsh.
 
 Remaining tasks (No guarantees to complete)
--- Memory Track working (using Romulator/Alpine version - AMD or Atmel versions not needed?). Save data is not hooked up to SD card
-- Weird timing display in VLM. Drops digits
-- CD-G support
 - DSP sometimes does not come up correctly even after reboot
 - Quality of life improvements
 - Other CD formats beside cdi (cue/bin, chd - not sure if this is possible as it requires multi-session)

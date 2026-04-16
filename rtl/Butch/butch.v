@@ -292,7 +292,9 @@ wire cdkartpullreset = butch_reg[0][20];
 //-CD Schematics show the ECPUCLK signal from the Jag console of 26.5909/2=13.6MHz
 //- and two crystals: 33.8688MHz going to the decoder and 12MHz going to the CD Micro. How these are being conditioned is not clear
 //-If running at 12MHz it would be ~575 sys clocks [26.5MHz*4] (communication operating at CD Micro clock rate with only 65 states per transaction with no processing time)
-//-currently only getfulltoc 0x1400 using					updrespa <= 9'h511;
+//-currently only getfulltoc 0x1400 using					updrespa <= 9'h1FF=d511;
+//                pause      0x0400 using					updpaus  <= 11'h7FF=d2047;
+//                unpause    0x0500 using					updpaus  <= 11'h7FF=d2047;
 
 //I2CNTRL   equ  BUTCH+$10	; i2s bus control register, R/W
 //setup:
@@ -306,7 +308,7 @@ wire cdkartpullreset = butch_reg[0][20];
 //;	movei	#BUTCH,r20		; moved for pipeline
 //	load	(r20),r27		;check for DSARX int pending
 //	btst	#13,r27
-//	jr	z,fifo_read	; This should ALWAYS fall thru the first time
+//	jr	z,_read	; This should ALWAYS fall thru the first time
 //; Set the match bit, to allow data
 //	moveq	#3,r26		; enable FIFO only
 //	store	r26,(r20)
@@ -355,6 +357,7 @@ reg [2:0] ds_resp_size; // max = 6
 reg [6:0] ds_resp_loop; // max = numtracks=99
 reg updresp; // signals for TOC responses to move to next one
 reg [8:0] updrespa;
+reg [10:0] updpaus;
 
 //SBCNTRL   equ  BUTCH+$14	; CD subcode control register, R/W
 //SUBDATA   equ  BUTCH+$18	; Subcode data register A
@@ -1120,6 +1123,7 @@ begin
 	recrc <= 1'b0;
 	updresp <= 1'b0;
 	updrespa <= 9'h0;
+	updpaus <= 11'h0;
 	aud_rd <= 1'b0;
 	old_doe_ds <= doe_ds;
 	old_doe_dsc <= doe_dsc;
@@ -2249,7 +2253,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (din[15:8]==8'h04) begin  // Pause
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000
+//				butch_reg[0][13] <= 1'b1; // |= 0x2000
+				updpaus <= 11'h7FF;
 				ds_resp[0] <= 32'h0141;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
@@ -2260,7 +2265,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			if (din[15:8]==8'h05) begin  // Pause Release
 				unhandled <= 1'b0;
 				butch_reg[0][12] <= 1'b1; // |= 0x1000
-				butch_reg[0][13] <= 1'b1; // |= 0x2000
+//				butch_reg[0][13] <= 1'b1; // |= 0x2000
+				updpaus <= 11'h7FF;
 				ds_resp[0] <= 32'h0142;
 				ds_resp_idx <= 3'h0;
 				ds_resp_size <= 3'h1;
@@ -2762,6 +2768,13 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 			add_ch3[15:0] <= din[15:0];
 		end
 	end
+	if (updpaus != 11'h00) begin
+		updpaus <= updpaus - 11'h1;
+	end
+	if (updpaus == 11'h01) begin
+		if ((ds_resp[0] <= 32'h0141) || (ds_resp[0] <= 32'h0142))
+			butch_reg[0][13] <= 1'b1; // |= 0x2000
+	end
 	if (old_doe_ds && !doe_ds && !updresp && (updrespa == 9'h00)) begin
 		ds_resp_idx <= ds_resp_idx + 3'h1;
 		if (ds_resp_size == 3'h0) begin
@@ -2891,7 +2904,8 @@ hackwait <= (seek_count==4'h1) || (seek_count==4'h4);
 	if ((ds_resp_size == 3'h0) &&
 		!ds_a &&
 		!updresp &&
-		(updrespa != 9'h00) &&
+		(updrespa == 9'h00) &&
+		(updpaus == 11'h00) &&
 		!play_title_pending_rsp) begin
 		if (leadout_title_pending) begin
 			leadout_title_pending <= 1'b0;

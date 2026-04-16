@@ -1550,7 +1550,7 @@ flipflop xbgl_ff
 assign fx68k_clk = turbo ? (ce_26_6_p1 | ce_26_6_p2) : j_xcpuclk;
 assign m68k_clk = fx68k_clk;
 
-//`define ACCURATE_CPU
+`define ACCURATE_CPU
 `ifdef ACCURATE_CPU
 m68kcpu m68k_inst
 (
