@@ -74,6 +74,8 @@ module _ob
 	output justify_oe,
 	output [15:0] dr_out,
 	output dr_oe,
+// NOT_NETLIST
+	input olpbugfix,	
 	input sys_clk // Generated
 );
 reg [2:0] type_ = 3'h0;
@@ -430,6 +432,7 @@ assign wd_b_out[23:16] = newrem[7:0];
 // OB.NET (97) - obwbk2[24-63] : ts
 assign wd_b_out[63:24] = 40'h00000000;
 
+reg olphack1;
 // OB.NET (101) - olpd[3-15] : ldp1q
 // OB.NET (102) - olpd[16-23] : ldp1q
 // always @(d or g)
@@ -445,6 +448,12 @@ begin
 	if (olp2w) begin
 		olpd[23:16] <= din[7:0]; // ldp1q negedge always @(d or g)
 	end
+	if ((olp1w) && (~olp2w) && q0 && olpbugfix) begin
+		olphack1 <= 1'b1;
+	end
+	if ((~q0 && ~q1) || olp2w || ~resetl) begin
+		olphack1 <= 1'b0;
+	end
 end
 
 // OB.NET (106) - olpd1[3-21] : mx2
@@ -453,6 +462,10 @@ assign olpd1[21:3] = (pclink) ? link[18:0] : olpd[21:3];
 // OB.NET (110) - olp[3] : upcnt
 always @(posedge sys_clk)
 begin
+	if (olphack1 && ~olp1w && olp2w && (q0 || q1)) begin
+		olp[15:3] <= olpd1[15:3]; // fd2q negedge // always @(posedge cp or negedge cd)
+		olp[21:16] <= din[5:0]; // ldp1q negedge always @(d or g)
+	end
 	if ((~old_clk && clk) | (old_resetl && ~resetl)) begin // fd2q always @(posedge cp or negedge cd)
 		if (~resetl) begin
 			olp[21:3] <= 19'h00000; // fd2q negedge // always @(posedge cp or negedge cd)

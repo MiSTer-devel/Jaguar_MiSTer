@@ -114,6 +114,7 @@ module jaguar
 	output              aud_16_eq,
 	input               turbo,
 	input               vintbugfix,
+	input               olpbugfix,
 
 	input               ddreq,
 
@@ -1364,6 +1365,7 @@ _tom tom_inst
 	.startwe         (startwe),
 	.atp             (dram_addrp[10:3]),
 	.vintbugfix      (vintbugfix),
+	.olpbugfix       (olpbugfix),
 	.turbo           (turbo),
 	.ntsc            (ntsc)
 );

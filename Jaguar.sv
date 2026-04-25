@@ -875,6 +875,7 @@ jaguar jaguar_inst
 
 	.turbo( 0),//status[3] ) ,
 	.vintbugfix( max_compat ),
+	.olpbugfix( max_compat ),
 	.cd_en( cd_drive_en ),
 	.cd_ex( cd_inserted ),
 	.cd_latency_en( cd_latency_en ),
