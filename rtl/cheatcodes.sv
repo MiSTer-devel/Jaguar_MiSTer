@@ -26,7 +26,7 @@ parameter DATA_WIDTH   = 8;  // Not more than 32
 parameter MAX_CODES    = 16;
 `else
 parameter MAX_CODES    = 32;
-`end
+`endif
 parameter BIG_ENDIAN   = 0;
 
 localparam NO_ADDR_LSB = (DATA_WIDTH == 16) ? 1 : 0;
