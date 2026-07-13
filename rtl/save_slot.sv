@@ -21,6 +21,7 @@ module jaguar_save_slot #(
 );
 
 	localparam integer BLOCK_BITS = $clog2(MAX_BLOCKS + 1);
+	localparam [BLOCK_BITS-1:0] MAX_BLOCKS_VALUE = MAX_BLOCKS;
 
 	reg old_mount_pulse = 1'b0;
 	reg old_load_req = 1'b0;
@@ -43,7 +44,7 @@ module jaguar_save_slot #(
 			if (block_count == 64'd0) begin
 				blocks_from_size = 1;
 			end else if (block_count > MAX_BLOCKS) begin
-				blocks_from_size = MAX_BLOCKS[BLOCK_BITS-1:0];
+				blocks_from_size = MAX_BLOCKS_VALUE;
 			end else begin
 				blocks_from_size = block_count[BLOCK_BITS-1:0];
 			end
@@ -58,6 +59,7 @@ module jaguar_save_slot #(
 		reg save_rise;
 		reg autosave_now;
 		reg [BLOCK_BITS-1:0] next_blocks;
+		reg [BLOCK_BITS-1:0] mounted_write_blocks;
 
 		mount_rise = mount_pulse && !old_mount_pulse;
 		mount_fall = old_mount_pulse && !mount_pulse;
@@ -65,6 +67,7 @@ module jaguar_save_slot #(
 		save_rise = save_req && !old_save_req;
 		autosave_now = pending && osd_status && !autosave_disable;
 		next_blocks = blocks_from_size(mount_size);
+		mounted_write_blocks = (mount_blocks_latched == '0) ? MAX_BLOCKS_VALUE : mount_blocks_latched;
 
 		old_mount_pulse <= mount_pulse;
 		old_load_req <= load_req;
@@ -114,8 +117,8 @@ module jaguar_save_slot #(
 			end
 
 			if (mount_fall) begin
-				mounted_blocks <= mount_blocks_latched;
-				mounted_writable <= !mount_readonly_latched && (mount_blocks_latched != '0);
+				mounted_blocks <= mounted_write_blocks;
+				mounted_writable <= !mount_readonly_latched;
 				pending <= 1'b0;
 				busy <= 1'b0;
 				loading <= 1'b0;
