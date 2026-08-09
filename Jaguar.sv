@@ -41,7 +41,6 @@ assign USER_OUT[4] = 1'b1;
 assign USER_OUT[5] = 1'b1;
 assign USER_OUT[6] = 1'b1;
 
-assign VGA_SL = 0;
 assign VGA_F1 = vga_field;
 assign VGA_SCALER = 0;
 assign VGA_DISABLE = 0;
@@ -81,14 +80,29 @@ wire clk_sys = clk_53m;
 
 wire clk_ram = clk_106m;
 
-wire [1:0] scale = status[10:9];
+wire [2:0] scan_fx = status[97:95];
+wire [2:0] scanlines = scan_fx ? (scan_fx - 3'd1) : 3'd0;
 wire [1:0] ar = status[8:7];
 wire ntsc = ~status[4];
 wire [11:0] auto_video_arx;
 wire [11:0] auto_video_ary;
+wire [11:0] video_arx = (!ar) ? auto_video_arx : (ar - 1'd1);
+wire [11:0] video_ary = (!ar) ? auto_video_ary : 12'd0;
 
-assign VIDEO_ARX = (!ar) ? auto_video_arx : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? auto_video_ary : 12'd0;
+wire       vcrop_en = status[88];
+wire [3:0] vcopt = status[92:89];
+wire [1:0] video_scale = status[94:93];
+wire       mouse_disabled = (status[6:5] == 2'd0);
+reg        en216p = 0;
+reg  [4:0] voff = 0;
+
+assign VGA_SL = scanlines[1:0];
+
+always @(posedge CLK_VIDEO) begin
+	en216p <= (HDMI_WIDTH == 12'd1920) && (HDMI_HEIGHT == 12'd1080) &&
+	           !forced_scandoubler && !scan_fx;
+	voff <= (vcopt < 4'd6) ? {vcopt, 1'b0} : ({vcopt, 1'b0} - 5'd24);
+end
 
 // Status Bit Map:
 //         0123456789ABCDEF
@@ -97,8 +111,8 @@ assign VIDEO_ARY = (!ar) ? auto_video_ary : 12'd0;
 // 032-047 XXXXXXXXXXXX....  032 033 034 035 036 037 038 039 040 041 042 043 044 045 046 047
 // 048-063 ....XXXXX.....XX  048 049 050 051 052 053 054 055 056 057 058 059 060 061 062 063
 // 064-079 ................  064 065 066 067 068 069 070 071 072 073 074 075 076 077 078 079
-// 080-095 .XX.XX..........  080 081 082 083 084 085 086 087 088 089 090 091 092 093 094 095
-// 096-111 ................  096 097 098 099 100 101 102 103 104 105 106 107 108 109 110 111
+// 080-095 ..XX.XXXXXXXXXXX  080 081 082 083 084 085 086 087 088 089 090 091 092 093 094 095
+// 096-111 XX..............  096 097 098 099 100 101 102 103 104 105 106 107 108 109 110 111
 // 112-127 ................  112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
 
 `include "build_id.v"
@@ -118,11 +132,12 @@ localparam CONF_STR = {
 	"P1-;",
 	"P1O[4],Region Setting,NTSC,PAL;",
 	"P1O[8:7],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"P1O[10:9],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-	// "P1O[19:18],Crop,None,Small,Primal;",
+	"P1O[97:95],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"d3P1O[88],Vertical Crop,Disabled,216p(5x);",
+	"d3P1O[92:89],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
+	"P1O[94:93],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"P1O[87],Visual Area,Active,Original;",
 	// "P1O[87],Active Video Crop,Off,On;",
-	// "P1O[88],Fixed Blank Sizes,Off,On;",
 	// Input Options
 	"P2,Input Options;",
 	"P2-;",
@@ -134,7 +149,7 @@ localparam CONF_STR = {
 	"P2O[33:32],Team Tap,Disabled,JoyPort1,JoyPort2;",
 	"P2O[6:5],Mouse,Disabled,JoyPort1,JoyPort2;",
 	"P2-;",
-	"P2RM,P1+P2 Pause;",
+	"d4P2RM,P1+P2 Pause;",
 	"P2-;",
 	//"P2O[41:40],Light Gun,Disabled,Joy1,Joy2,Mouse;",
 //	"DDP2O[43:42],Cross,Small,Medium,Large,None;",
@@ -170,7 +185,7 @@ localparam CONF_STR = {
 	"jp,Y,B,A,Select,Start;",
 	"-;",
 	"I,",
-	"v,2;", // Increment to reset settings to defaults
+	"v,3;", // Increment to reset settings to defaults
 	"V,v",`BUILD_DATE
 };
 
@@ -319,7 +334,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(4)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({~memtrak_bios_exists,~gg_available,~bk_ena}),
+	.status_menumask({11'd0,mouse_disabled,en216p,~memtrak_bios_exists,~gg_available,~bk_ena}),
 	.info_req(j_info_req),
 	.info(j_info),
 
@@ -835,17 +850,10 @@ end
 
 assign CLK_VIDEO = clk_sys;
 
-//assign VGA_SL = {~interlace,~interlace} & sl[1:0];
-
-reg crop;
-reg [13:0] hcount;
-
-wire [7:0] base_video_r = crop ? 8'h00 : vga_r;
-wire [7:0] base_video_g = crop ? 8'h00 : vga_g;
-wire [7:0] base_video_b = crop ? 8'h00 : vga_b;
 wire [7:0] mix_video_r;
 wire [7:0] mix_video_g;
 wire [7:0] mix_video_b;
+wire vga_de_mixer;
 
 numstick numstick_inst
 (
@@ -855,9 +863,9 @@ numstick numstick_inst
 	.enable(numstick_en),
 	.hblank(hblank),
 	.vblank(vblank),
-	.in_r(base_video_r),
-	.in_g(base_video_g),
-	.in_b(base_video_b),
+	.in_r(vga_r),
+	.in_g(vga_g),
+	.in_b(vga_b),
 	.stick_l_x($signed(analog_p1_l[7:0])),
 	.stick_l_y($signed(analog_p1_l[15:8])),
 	.stick_r_x($signed(analog_p1_r[7:0])),
@@ -873,12 +881,12 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.CLK_VIDEO(CLK_VIDEO),      // input clk_sys
 	.ce_pix( vid_ce ),          // input ce_pix
 
-	.HDMI_FREEZE(0),
+	.HDMI_FREEZE(HDMI_FREEZE),
 	.freeze_sync(),
 
-	.scandoubler(scale || forced_scandoubler),
+	.scandoubler((scan_fx != 3'd0) || forced_scandoubler),
 
-	.hq2x(scale==1),
+	.hq2x(scan_fx == 3'd1),
 
 	.gamma_bus(gamma_bus),
 
@@ -897,36 +905,27 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.VGA_B( VGA_B ),         // output [7:0] VGA_B
 	.VGA_VS( VGA_VS ),       // output VGA_VS
 	.VGA_HS( VGA_HS ),       // output VGA_HS
-	.VGA_DE( VGA_DE ),          // output VGA_DE
+	.VGA_DE( vga_de_mixer ),    // output VGA_DE
 	.CE_PIXEL(CE_PIXEL)
 );
 
-// always @(posedge clk_sys)
-// if (reset) begin
-// 	 hcount <= 0;
-// end else begin
-// 	hcount <= hcount + 14'd1;
-//    if (hblank) begin
-// 		hcount <= 0;
-// 	end
-//    if (hcount == ((status[18] ? 14'd1394 : 14'd1365)<<2)) begin // 1394 works well for NBA Jam and Flip Out; 1365 for Primal Rage
-// 		crop <= 1;
-// 	end
-//    if (hcount == ((status[18] ? 14'd45 : 14'd84)<<2)) begin  // 45 works well for NBA Jam and Flip Out; 84 for Primal Rage
-// 		crop <= 0;
-// 	end
-//    if (status[19:18]==2'b00) begin
-// 		crop <= 0;
-// 	end
-// end
-
-// assign VGA_R = vga_r;
-// assign VGA_G = vga_g;
-// assign VGA_B = vga_b;
-// assign VGA_VS = vga_vs;
-// assign VGA_HS = vga_hs;
-// assign VGA_DE = hblank & vblank;
-// assign CE_PIXEL = vid_ce;
+video_freak video_freak
+(
+	.CLK_VIDEO(CLK_VIDEO),
+	.CE_PIXEL(CE_PIXEL),
+	.VGA_VS(VGA_VS),
+	.HDMI_WIDTH(HDMI_WIDTH),
+	.HDMI_HEIGHT(HDMI_HEIGHT),
+	.VGA_DE(VGA_DE),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY),
+	.VGA_DE_IN(vga_de_mixer),
+	.ARX(video_arx),
+	.ARY(video_ary),
+	.CROP_SIZE((en216p && vcrop_en) ? 12'd216 : 12'd0),
+	.CROP_OFF(voff),
+	.SCALE({1'b0, video_scale})
+);
 
 wire aud_l_pwm;
 wire aud_r_pwm;
