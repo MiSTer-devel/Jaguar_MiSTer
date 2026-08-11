@@ -258,6 +258,7 @@ wire ram64;
 wire xvclk_o;
 // wire aud_16_eq = 0;
 wire memtrack;
+wire memtrack_reload_pulse;
 wire memtrak_save_mount;
 wire eeprom_save_mount;
 wire eeprom_rd;
@@ -270,6 +271,8 @@ wire cart_save_busy;
 wire cart_save_pending;
 wire cart_save_enabled;
 wire memtrak_save_busy;
+wire memtrak_save_loading;
+wire memtrak_save_reload_waiting;
 wire memtrak_save_pending;
 wire memtrak_save_enabled;
 wire eeprom_save_busy;
@@ -389,17 +392,36 @@ reg       old_ramreset;
 //integer   timeout = 0;
 
 wire boot_index = ioctl_index[5:0] == 0;
-wire os_index = (boot_index && (ioctl_index[7:6] == 0)) || ioctl_index[5:0] == 2;
+wire persistent_os_index = ioctl_index[5:0] == 2;
+wire persistent_cdos_index = ioctl_index[5:0] == 3;
+wire persistent_nvme_index = ioctl_index[5:0] == 4;
+wire legacy_os_index = boot_index && (ioctl_index[7:6] == 0);
+wire legacy_cdos_index = boot_index && (ioctl_index[7:6] == 1);
+wire legacy_nvme_index = boot_index && (ioctl_index[7:6] == 2);
+
+// MiSTer Main restores FC files while parsing CONF_STR, then probes the legacy
+// boot*.rom names. Remember each persistent transfer so the later legacy file
+// cannot overwrite the explicitly assigned BIOS. These flags intentionally
+// survive soft resets and are cleared only when the FPGA core is reloaded.
+reg persistent_os_loaded = 0;
+reg persistent_cdos_loaded = 0;
+reg persistent_nvme_loaded = 0;
+
+wire os_index = persistent_os_index || (legacy_os_index && !persistent_os_loaded);
 wire cart_index = ioctl_index[5:0] == 1;
-wire cdos_index = (boot_index && (ioctl_index[7:6] == 1)) || ioctl_index[5:0] == 3;
-wire nvme_index = (boot_index && (ioctl_index[7:6] == 2)) || ioctl_index[5:0] == 4;
+wire cdos_index = persistent_cdos_index || (legacy_cdos_index && !persistent_cdos_loaded);
+wire nvme_index = persistent_nvme_index || (legacy_nvme_index && !persistent_nvme_loaded);
+wire suppress_legacy_bios_download = ioctl_download &&
+	((legacy_os_index && persistent_os_loaded) ||
+	 (legacy_cdos_index && persistent_cdos_loaded) ||
+	 (legacy_nvme_index && persistent_nvme_loaded));
 wire os_download = ioctl_download && os_index;
 wire cart_download = ioctl_download & cart_index;
 wire code_download = ioctl_download & &ioctl_index;
 wire cdos_download = ioctl_download && cdos_index;
 wire nvme_download = ioctl_download && nvme_index;
 wire override;
-assign ioctl_wait = !cart_wrack;
+assign ioctl_wait = suppress_legacy_bios_download ? 1'b0 : !cart_wrack;
 wire  [7:0] cd_session_count;
 wire        cd_toc_wr;
 wire        cd_toc_done;
@@ -441,6 +463,17 @@ end
 
 always @(posedge clk_sys) begin
 	old_cmc <= cd_media_change;
+
+	// Set priority only after receiving actual file data. A missing or empty
+	// persistent file must not suppress the corresponding boot*.rom fallback.
+	if (ioctl_download && ioctl_wr) begin
+		if (persistent_os_index)
+			persistent_os_loaded <= 1;
+		if (persistent_cdos_index)
+			persistent_cdos_loaded <= 1;
+		if (persistent_nvme_index)
+			persistent_nvme_loaded <= 1;
+	end
 
 	if (nvme_download)
 		memtrak_bios_exists <= 1;
@@ -549,7 +582,12 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | status[15] | cd_stream_reset;
 
-wire xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download);
+// MemoryTrack restoration spans 256 HPS block transactions. Keep the Jaguar
+// stopped until the final sector is in local RAM so the BIOS/game cannot inspect
+// or format a partially restored card. Saving must not reset the running core.
+wire xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download |
+                  (memtrack && (memtrack_reload_pulse || memtrak_save_loading ||
+                                memtrak_save_reload_waiting)));
 wire sdram_xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download);
 wire xresetl = xresetlp && !(|bootcopy);
 reg [18:0] bootcopy; // 128k_bios+256k_cdbios+128k_nvbios == 512k
@@ -1311,6 +1349,11 @@ spram_byte_32x15 fastcache2
 `endif
 
 assign memtrack = (status[56] || cd_loaded) && memtrak_bios_exists;
+reg old_memtrack = 1'b0;
+always @(posedge clk_sys) old_memtrack <= memtrack;
+wire memtrack_enable = memtrack && !old_memtrack;
+assign memtrack_reload_pulse = (cd_mount_start && memtrack) ||
+                               (memtrack_enable && !cd_media_change);
 wire memtrack_wr = memtrack && ram_write_req;
 wire memtrack_ram = memtrack && abus_out[23:20]==4'h9;
 wire memtrack_wrram = memtrack_wr && memtrack_ram;
@@ -1741,6 +1784,7 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	.reload_pulse(1'b0),
 	.save_req(status[11]),
 	.autosave_disable(status[13]),
 	.osd_status(OSD_STATUS),
@@ -1748,6 +1792,7 @@ jaguar_save_slot #(
 	.mounted_writable(cart_save_enabled),
 	.pending(cart_save_pending),
 	.busy(cart_save_busy),
+	.reload_waiting(),
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
@@ -1763,6 +1808,10 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	// FastRAM and MemoryTrack share this block in the single-RAM build. A
+	// cartridge can therefore overwrite the boot-time JMC contents. Reload the
+	// mounted JMC whenever a newly mounted CD actually needs MemoryTrack.
+	.reload_pulse(memtrack_reload_pulse),
 	.save_req(status[11]),
 	.autosave_disable(status[13]),
 	.osd_status(OSD_STATUS),
@@ -1770,6 +1819,8 @@ jaguar_save_slot #(
 	.mounted_writable(memtrak_save_enabled),
 	.pending(memtrak_save_pending),
 	.busy(memtrak_save_busy),
+	.loading(memtrak_save_loading),
+	.reload_waiting(memtrak_save_reload_waiting),
 	.sd_lba(memtrak_slot_lba),
 	.sd_rd(memtrak_slot_rd),
 	.sd_wr(memtrak_slot_wr),
@@ -1785,6 +1836,7 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	.reload_pulse(1'b0),
 	.save_req(status[11]),
 	.autosave_disable(1'b0),
 	.osd_status(OSD_STATUS),
@@ -1792,6 +1844,7 @@ jaguar_save_slot #(
 	.mounted_writable(eeprom_save_enabled),
 	.pending(eeprom_save_pending),
 	.busy(eeprom_save_busy),
+	.reload_waiting(),
 	.sd_lba(eeprom_lba),
 	.sd_rd(eeprom_rd),
 	.sd_wr(eeprom_wr),

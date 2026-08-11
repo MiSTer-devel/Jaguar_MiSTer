@@ -7,6 +7,7 @@ module jaguar_save_slot #(
 	input         mount_readonly,
 	input  [63:0] mount_size,
 	input         load_req,
+	input         reload_pulse,
 	input         save_req,
 	input         autosave_disable,
 	input         osd_status,
@@ -14,6 +15,8 @@ module jaguar_save_slot #(
 	output reg    mounted_writable = 1'b0,
 	output reg    pending = 1'b0,
 	output reg    busy = 1'b0,
+	output reg    loading = 1'b0,
+	output reg    reload_waiting = 1'b0,
 	output reg [31:0] sd_lba = 32'd0,
 	output reg    sd_rd = 1'b0,
 	output reg    sd_wr = 1'b0,
@@ -27,7 +30,6 @@ module jaguar_save_slot #(
 	reg old_load_req = 1'b0;
 	reg old_save_req = 1'b0;
 	reg old_sd_ack = 1'b0;
-	reg loading = 1'b0;
 	reg [BLOCK_BITS-1:0] mounted_blocks = '0;
 	reg       mount_readonly_latched = 1'b0;
 	reg [BLOCK_BITS-1:0] mount_blocks_latched = '0;
@@ -82,12 +84,16 @@ module jaguar_save_slot #(
 			mounted_blocks <= '0;
 			mount_readonly_latched <= 1'b0;
 			mount_blocks_latched <= '0;
+			reload_waiting <= 1'b0;
 			sd_lba <= 32'd0;
 			sd_rd <= 1'b0;
 			sd_wr <= 1'b0;
 		end
 
 		if (!invalidate_pulse) begin
+			if (reload_pulse && ((mounted_blocks != '0) || mount_pulse))
+				reload_waiting <= 1'b1;
+
 			if (dirty_pulse && mounted_writable && !osd_status) begin
 				pending <= 1'b1;
 			end else if (busy && !loading) begin
@@ -107,6 +113,7 @@ module jaguar_save_slot #(
 			mounted_blocks <= '0;
 			mount_readonly_latched <= mount_readonly;
 			mount_blocks_latched <= next_blocks;
+			reload_waiting <= 1'b0;
 			sd_lba <= 32'd0;
 			sd_rd <= 1'b0;
 			sd_wr <= 1'b0;
@@ -122,11 +129,14 @@ module jaguar_save_slot #(
 				pending <= 1'b0;
 				busy <= 1'b0;
 				loading <= 1'b0;
+				reload_waiting <= 1'b0;
 				sd_lba <= 32'd0;
 				sd_rd <= 1'b0;
 				sd_wr <= 1'b0;
 
-				if (!mount_readonly_latched && (mount_blocks_latched != '0)) begin
+				// Read-only images still need to be restored into the local RAM.
+				// mounted_writable separately prevents dirty/save operations.
+				if (mount_blocks_latched != '0) begin
 					busy <= 1'b1;
 					loading <= 1'b1;
 					sd_rd <= 1'b1;
@@ -141,21 +151,38 @@ module jaguar_save_slot #(
 			if (busy) begin
 				if (old_sd_ack && !sd_ack) begin
 					if ((sd_lba + 32'd1) >= mounted_blocks) begin
-						busy <= 1'b0;
-						loading <= 1'b0;
 						sd_lba <= 32'd0;
+						if (reload_waiting || (reload_pulse && (mounted_blocks != '0))) begin
+							busy <= 1'b1;
+							loading <= 1'b1;
+							reload_waiting <= 1'b0;
+							sd_rd <= 1'b1;
+							sd_wr <= 1'b0;
+						end else begin
+							busy <= 1'b0;
+							loading <= 1'b0;
+						end
 					end else begin
 						sd_lba <= sd_lba + 32'd1;
 						sd_rd <= loading;
 						sd_wr <= !loading;
 					end
 				end
-			end else if (!mount_pulse && mounted_writable && (load_rise || save_rise || autosave_now)) begin
+			end else if (!mount_pulse &&
+				((mounted_blocks != '0) && (load_rise || reload_waiting || reload_pulse))) begin
 				busy <= 1'b1;
-				loading <= load_rise;
+				loading <= 1'b1;
+				pending <= 1'b0;
+				reload_waiting <= 1'b0;
 				sd_lba <= 32'd0;
-				sd_rd <= load_rise;
-				sd_wr <= !load_rise;
+				sd_rd <= 1'b1;
+				sd_wr <= 1'b0;
+			end else if (!mount_pulse && mounted_writable && (save_rise || autosave_now)) begin
+				busy <= 1'b1;
+				loading <= 1'b0;
+				sd_lba <= 32'd0;
+				sd_rd <= 1'b0;
+				sd_wr <= 1'b1;
 			end
 		end
 	end
