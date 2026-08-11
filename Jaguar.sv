@@ -41,7 +41,6 @@ assign USER_OUT[4] = 1'b1;
 assign USER_OUT[5] = 1'b1;
 assign USER_OUT[6] = 1'b1;
 
-assign VGA_SL = 0;
 assign VGA_F1 = vga_field;
 assign VGA_SCALER = 0;
 assign VGA_DISABLE = 0;
@@ -81,14 +80,29 @@ wire clk_sys = clk_53m;
 
 wire clk_ram = clk_106m;
 
-wire [1:0] scale = status[10:9];
+wire [2:0] scan_fx = status[97:95];
+wire [2:0] scanlines = scan_fx ? (scan_fx - 3'd1) : 3'd0;
 wire [1:0] ar = status[8:7];
 wire ntsc = ~status[4];
 wire [11:0] auto_video_arx;
 wire [11:0] auto_video_ary;
+wire [11:0] video_arx = (!ar) ? auto_video_arx : (ar - 1'd1);
+wire [11:0] video_ary = (!ar) ? auto_video_ary : 12'd0;
 
-assign VIDEO_ARX = (!ar) ? auto_video_arx : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? auto_video_ary : 12'd0;
+wire       vcrop_en = status[88];
+wire [3:0] vcopt = status[92:89];
+wire [1:0] video_scale = status[94:93];
+wire       mouse_disabled = (status[6:5] == 2'd0);
+reg        en216p = 0;
+reg  [4:0] voff = 0;
+
+assign VGA_SL = scanlines[1:0];
+
+always @(posedge CLK_VIDEO) begin
+	en216p <= (HDMI_WIDTH == 12'd1920) && (HDMI_HEIGHT == 12'd1080) &&
+	           !forced_scandoubler && !scan_fx;
+	voff <= (vcopt < 4'd6) ? {vcopt, 1'b0} : ({vcopt, 1'b0} - 5'd24);
+end
 
 // Status Bit Map:
 //         0123456789ABCDEF
@@ -97,8 +111,8 @@ assign VIDEO_ARY = (!ar) ? auto_video_ary : 12'd0;
 // 032-047 XXXXXXXXXXXX....  032 033 034 035 036 037 038 039 040 041 042 043 044 045 046 047
 // 048-063 ....XXXXX.....XX  048 049 050 051 052 053 054 055 056 057 058 059 060 061 062 063
 // 064-079 ................  064 065 066 067 068 069 070 071 072 073 074 075 076 077 078 079
-// 080-095 .XX.XX..........  080 081 082 083 084 085 086 087 088 089 090 091 092 093 094 095
-// 096-111 ................  096 097 098 099 100 101 102 103 104 105 106 107 108 109 110 111
+// 080-095 ..XX.XXXXXXXXXXX  080 081 082 083 084 085 086 087 088 089 090 091 092 093 094 095
+// 096-111 XX..............  096 097 098 099 100 101 102 103 104 105 106 107 108 109 110 111
 // 112-127 ................  112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
 
 `include "build_id.v"
@@ -118,11 +132,12 @@ localparam CONF_STR = {
 	"P1-;",
 	"P1O[4],Region Setting,NTSC,PAL;",
 	"P1O[8:7],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"P1O[10:9],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-	// "P1O[19:18],Crop,None,Small,Primal;",
+	"P1O[97:95],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"d3P1O[88],Vertical Crop,Disabled,216p(5x);",
+	"d3P1O[92:89],Crop Offset,0,2,4,6,8,10,-12,-10,-8,-6,-4,-2;",
+	"P1O[94:93],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"P1O[87],Visual Area,Active,Original;",
 	// "P1O[87],Active Video Crop,Off,On;",
-	// "P1O[88],Fixed Blank Sizes,Off,On;",
 	// Input Options
 	"P2,Input Options;",
 	"P2-;",
@@ -134,7 +149,7 @@ localparam CONF_STR = {
 	"P2O[33:32],Team Tap,Disabled,JoyPort1,JoyPort2;",
 	"P2O[6:5],Mouse,Disabled,JoyPort1,JoyPort2;",
 	"P2-;",
-	"P2RM,P1+P2 Pause;",
+	"d4P2RM,P1+P2 Pause;",
 	"P2-;",
 	//"P2O[41:40],Light Gun,Disabled,Joy1,Joy2,Mouse;",
 //	"DDP2O[43:42],Cross,Small,Medium,Large,None;",
@@ -170,7 +185,7 @@ localparam CONF_STR = {
 	"jp,Y,B,A,Select,Start;",
 	"-;",
 	"I,",
-	"v,2;", // Increment to reset settings to defaults
+	"v,3;", // Increment to reset settings to defaults
 	"V,v",`BUILD_DATE
 };
 
@@ -243,6 +258,7 @@ wire ram64;
 wire xvclk_o;
 // wire aud_16_eq = 0;
 wire memtrack;
+wire memtrack_reload_pulse;
 wire memtrak_save_mount;
 wire eeprom_save_mount;
 wire eeprom_rd;
@@ -255,6 +271,8 @@ wire cart_save_busy;
 wire cart_save_pending;
 wire cart_save_enabled;
 wire memtrak_save_busy;
+wire memtrak_save_loading;
+wire memtrak_save_reload_waiting;
 wire memtrak_save_pending;
 wire memtrak_save_enabled;
 wire eeprom_save_busy;
@@ -319,7 +337,7 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(1000), .WIDE(1), .VDNUM(4)) hps_io
 
 	// .status_in({status[31:8],region_req,status[5:0]}),
 	// .status_set(region_set),
-	.status_menumask({~memtrak_bios_exists,~gg_available,~bk_ena}),
+	.status_menumask({11'd0,mouse_disabled,en216p,~memtrak_bios_exists,~gg_available,~bk_ena}),
 	.info_req(j_info_req),
 	.info(j_info),
 
@@ -374,17 +392,36 @@ reg       old_ramreset;
 //integer   timeout = 0;
 
 wire boot_index = ioctl_index[5:0] == 0;
-wire os_index = (boot_index && (ioctl_index[7:6] == 0)) || ioctl_index[5:0] == 2;
+wire persistent_os_index = ioctl_index[5:0] == 2;
+wire persistent_cdos_index = ioctl_index[5:0] == 3;
+wire persistent_nvme_index = ioctl_index[5:0] == 4;
+wire legacy_os_index = boot_index && (ioctl_index[7:6] == 0);
+wire legacy_cdos_index = boot_index && (ioctl_index[7:6] == 1);
+wire legacy_nvme_index = boot_index && (ioctl_index[7:6] == 2);
+
+// MiSTer Main restores FC files while parsing CONF_STR, then probes the legacy
+// boot*.rom names. Remember each persistent transfer so the later legacy file
+// cannot overwrite the explicitly assigned BIOS. These flags intentionally
+// survive soft resets and are cleared only when the FPGA core is reloaded.
+reg persistent_os_loaded = 0;
+reg persistent_cdos_loaded = 0;
+reg persistent_nvme_loaded = 0;
+
+wire os_index = persistent_os_index || (legacy_os_index && !persistent_os_loaded);
 wire cart_index = ioctl_index[5:0] == 1;
-wire cdos_index = (boot_index && (ioctl_index[7:6] == 1)) || ioctl_index[5:0] == 3;
-wire nvme_index = (boot_index && (ioctl_index[7:6] == 2)) || ioctl_index[5:0] == 4;
+wire cdos_index = persistent_cdos_index || (legacy_cdos_index && !persistent_cdos_loaded);
+wire nvme_index = persistent_nvme_index || (legacy_nvme_index && !persistent_nvme_loaded);
+wire suppress_legacy_bios_download = ioctl_download &&
+	((legacy_os_index && persistent_os_loaded) ||
+	 (legacy_cdos_index && persistent_cdos_loaded) ||
+	 (legacy_nvme_index && persistent_nvme_loaded));
 wire os_download = ioctl_download && os_index;
 wire cart_download = ioctl_download & cart_index;
 wire code_download = ioctl_download & &ioctl_index;
 wire cdos_download = ioctl_download && cdos_index;
 wire nvme_download = ioctl_download && nvme_index;
 wire override;
-assign ioctl_wait = !cart_wrack;
+assign ioctl_wait = suppress_legacy_bios_download ? 1'b0 : !cart_wrack;
 wire  [7:0] cd_session_count;
 wire        cd_toc_wr;
 wire        cd_toc_done;
@@ -426,6 +463,17 @@ end
 
 always @(posedge clk_sys) begin
 	old_cmc <= cd_media_change;
+
+	// Set priority only after receiving actual file data. A missing or empty
+	// persistent file must not suppress the corresponding boot*.rom fallback.
+	if (ioctl_download && ioctl_wr) begin
+		if (persistent_os_index)
+			persistent_os_loaded <= 1;
+		if (persistent_cdos_index)
+			persistent_cdos_loaded <= 1;
+		if (persistent_nvme_index)
+			persistent_nvme_loaded <= 1;
+	end
 
 	if (nvme_download)
 		memtrak_bios_exists <= 1;
@@ -534,7 +582,12 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | status[15] | cd_stream_reset;
 
-wire xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download);
+// MemoryTrack restoration spans 256 HPS block transactions. Keep the Jaguar
+// stopped until the final sector is in local RAM so the BIOS/game cannot inspect
+// or format a partially restored card. Saving must not reset the running core.
+wire xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download |
+                  (memtrack && (memtrack_reload_pulse || memtrak_save_loading ||
+                                memtrak_save_reload_waiting)));
 wire sdram_xresetlp = !(reset | os_download | cart_download | cdos_download | nvme_download);
 wire xresetl = xresetlp && !(|bootcopy);
 reg [18:0] bootcopy; // 128k_bios+256k_cdbios+128k_nvbios == 512k
@@ -835,17 +888,10 @@ end
 
 assign CLK_VIDEO = clk_sys;
 
-//assign VGA_SL = {~interlace,~interlace} & sl[1:0];
-
-reg crop;
-reg [13:0] hcount;
-
-wire [7:0] base_video_r = crop ? 8'h00 : vga_r;
-wire [7:0] base_video_g = crop ? 8'h00 : vga_g;
-wire [7:0] base_video_b = crop ? 8'h00 : vga_b;
 wire [7:0] mix_video_r;
 wire [7:0] mix_video_g;
 wire [7:0] mix_video_b;
+wire vga_de_mixer;
 
 numstick numstick_inst
 (
@@ -855,9 +901,9 @@ numstick numstick_inst
 	.enable(numstick_en),
 	.hblank(hblank),
 	.vblank(vblank),
-	.in_r(base_video_r),
-	.in_g(base_video_g),
-	.in_b(base_video_b),
+	.in_r(vga_r),
+	.in_g(vga_g),
+	.in_b(vga_b),
 	.stick_l_x($signed(analog_p1_l[7:0])),
 	.stick_l_y($signed(analog_p1_l[15:8])),
 	.stick_r_x($signed(analog_p1_r[7:0])),
@@ -873,12 +919,12 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.CLK_VIDEO(CLK_VIDEO),      // input clk_sys
 	.ce_pix( vid_ce ),          // input ce_pix
 
-	.HDMI_FREEZE(0),
+	.HDMI_FREEZE(HDMI_FREEZE),
 	.freeze_sync(),
 
-	.scandoubler(scale || forced_scandoubler),
+	.scandoubler((scan_fx != 3'd0) || forced_scandoubler),
 
-	.hq2x(scale==1),
+	.hq2x(scan_fx == 3'd1),
 
 	.gamma_bus(gamma_bus),
 
@@ -897,36 +943,27 @@ video_mixer #(.LINE_LENGTH(800), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 	.VGA_B( VGA_B ),         // output [7:0] VGA_B
 	.VGA_VS( VGA_VS ),       // output VGA_VS
 	.VGA_HS( VGA_HS ),       // output VGA_HS
-	.VGA_DE( VGA_DE ),          // output VGA_DE
+	.VGA_DE( vga_de_mixer ),    // output VGA_DE
 	.CE_PIXEL(CE_PIXEL)
 );
 
-// always @(posedge clk_sys)
-// if (reset) begin
-// 	 hcount <= 0;
-// end else begin
-// 	hcount <= hcount + 14'd1;
-//    if (hblank) begin
-// 		hcount <= 0;
-// 	end
-//    if (hcount == ((status[18] ? 14'd1394 : 14'd1365)<<2)) begin // 1394 works well for NBA Jam and Flip Out; 1365 for Primal Rage
-// 		crop <= 1;
-// 	end
-//    if (hcount == ((status[18] ? 14'd45 : 14'd84)<<2)) begin  // 45 works well for NBA Jam and Flip Out; 84 for Primal Rage
-// 		crop <= 0;
-// 	end
-//    if (status[19:18]==2'b00) begin
-// 		crop <= 0;
-// 	end
-// end
-
-// assign VGA_R = vga_r;
-// assign VGA_G = vga_g;
-// assign VGA_B = vga_b;
-// assign VGA_VS = vga_vs;
-// assign VGA_HS = vga_hs;
-// assign VGA_DE = hblank & vblank;
-// assign CE_PIXEL = vid_ce;
+video_freak video_freak
+(
+	.CLK_VIDEO(CLK_VIDEO),
+	.CE_PIXEL(CE_PIXEL),
+	.VGA_VS(VGA_VS),
+	.HDMI_WIDTH(HDMI_WIDTH),
+	.HDMI_HEIGHT(HDMI_HEIGHT),
+	.VGA_DE(VGA_DE),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY),
+	.VGA_DE_IN(vga_de_mixer),
+	.ARX(video_arx),
+	.ARY(video_ary),
+	.CROP_SIZE((en216p && vcrop_en) ? 12'd216 : 12'd0),
+	.CROP_OFF(voff),
+	.SCALE({1'b0, video_scale})
+);
 
 wire aud_l_pwm;
 wire aud_r_pwm;
@@ -1312,6 +1349,11 @@ spram_byte_32x15 fastcache2
 `endif
 
 assign memtrack = (status[56] || cd_loaded) && memtrak_bios_exists;
+reg old_memtrack = 1'b0;
+always @(posedge clk_sys) old_memtrack <= memtrack;
+wire memtrack_enable = memtrack && !old_memtrack;
+assign memtrack_reload_pulse = (cd_mount_start && memtrack) ||
+                               (memtrack_enable && !cd_media_change);
 wire memtrack_wr = memtrack && ram_write_req;
 wire memtrack_ram = memtrack && abus_out[23:20]==4'h9;
 wire memtrack_wrram = memtrack_wr && memtrack_ram;
@@ -1742,6 +1784,7 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	.reload_pulse(1'b0),
 	.save_req(status[11]),
 	.autosave_disable(status[13]),
 	.osd_status(OSD_STATUS),
@@ -1749,6 +1792,7 @@ jaguar_save_slot #(
 	.mounted_writable(cart_save_enabled),
 	.pending(cart_save_pending),
 	.busy(cart_save_busy),
+	.reload_waiting(),
 	.sd_lba(sd_lba),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
@@ -1764,6 +1808,10 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	// FastRAM and MemoryTrack share this block in the single-RAM build. A
+	// cartridge can therefore overwrite the boot-time JMC contents. Reload the
+	// mounted JMC whenever a newly mounted CD actually needs MemoryTrack.
+	.reload_pulse(memtrack_reload_pulse),
 	.save_req(status[11]),
 	.autosave_disable(status[13]),
 	.osd_status(OSD_STATUS),
@@ -1771,6 +1819,8 @@ jaguar_save_slot #(
 	.mounted_writable(memtrak_save_enabled),
 	.pending(memtrak_save_pending),
 	.busy(memtrak_save_busy),
+	.loading(memtrak_save_loading),
+	.reload_waiting(memtrak_save_reload_waiting),
 	.sd_lba(memtrak_slot_lba),
 	.sd_rd(memtrak_slot_rd),
 	.sd_wr(memtrak_slot_wr),
@@ -1786,6 +1836,7 @@ jaguar_save_slot #(
 	.mount_readonly(img_readonly),
 	.mount_size(img_size),
 	.load_req(status[12]),
+	.reload_pulse(1'b0),
 	.save_req(status[11]),
 	.autosave_disable(1'b0),
 	.osd_status(OSD_STATUS),
@@ -1793,6 +1844,7 @@ jaguar_save_slot #(
 	.mounted_writable(eeprom_save_enabled),
 	.pending(eeprom_save_pending),
 	.busy(eeprom_save_busy),
+	.reload_waiting(),
 	.sd_lba(eeprom_lba),
 	.sd_rd(eeprom_rd),
 	.sd_wr(eeprom_wr),
