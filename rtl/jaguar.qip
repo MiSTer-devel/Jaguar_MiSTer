@@ -1,0 +1,6 @@
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) jaguar.v ]
+
+set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) jaguar_common/jaguar_common.qip ]
+set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) Tom/tom.qip ]
+set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) Jerry/jerry.qip ]
+set_global_assignment -name QIP_FILE [file join $::quartus(qip_path) Butch/butch.qip ]
