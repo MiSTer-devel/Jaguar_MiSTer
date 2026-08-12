@@ -1,10 +1,23 @@
 set_global_assignment -name SYSTEMVERILOG_FILE Jaguar.sv
 set_global_assignment -name SDC_FILE           Jaguar.sdc
 
-set_global_assignment -name QIP_FILE           rtl/jaguar/jaguar.qip
+set_global_assignment -name QIP_FILE           rtl/jaguar.qip
+
+set_global_assignment -name VERILOG_FILE       rtl/nuked-68k/68k.v
 
 set_global_assignment -name VERILOG_FILE       rtl/jag_controller_mux.v
+set_global_assignment -name VERILOG_FILE       rtl/jag_team_tap.v
+set_global_assignment -name VERILOG_FILE       rtl/gamedrive.v
 set_global_assignment -name VERILOG_FILE       rtl/ps2_mouse.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/auto_crt_ar.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/jag_lightgun.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/numstick.sv
+set_global_assignment -name VERILOG_FILE       rtl/eeprom_93c46_x16.v
+set_global_assignment -name VERILOG_FILE       rtl/tda1545a.v
+
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cheatcodes.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cd_stream.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/save_slot.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/ddram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram_dual.sv

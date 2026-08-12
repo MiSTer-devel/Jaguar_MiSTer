@@ -1,13 +1,13 @@
 # Core-local timing constraints for Jaguar_MiSTer.
 #
 # xvclk and tlw are clock-enable strobes derived from sys_clk inside
-# rtl/Rework/jaguar.v. They are not real clocks and should not be modeled with
+# rtl/jaguar.v. They are not real clocks and should not be modeled with
 # create_clock/create_generated_clock. Apply multicycle exceptions only to
 # small islands where both launch and capture registers are gated by the same
 # strobe.
 #
 # Verified starter island:
-#   rtl/Rework/jaguar.v beam position counters
+#   rtl/jaguar.v beam position counters
 #     beam_x[*], beam_y[*], prev_hs, prev_vs
 # These registers are updated in a single posedge sys_clk block guarded by
 # "else if (xvclk)" and feed the lightgun overlay.
